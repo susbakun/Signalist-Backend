@@ -4,12 +4,9 @@
   "description": "Express.js backend for Signalist frontend application",
   "main": "src/index.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node-dev --respawn src/index.ts",
-    "test": "jest",
-    "lint": "eslint . --ext .ts",
-    "migrate": "knex migrate:latest"
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "express",

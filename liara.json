@@ -1,0 +1,10 @@
+{
+  "platform": "node",
+  "port": 3000,
+  "app": "signalist-backend",
+  "node": {
+    "version": "22",
+    "mirror": true,
+    "timezone": "Asia/Tehran"
+  }
+}
