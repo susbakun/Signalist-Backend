@@ -19,8 +19,74 @@ class RedisService {
         return;
       }
 
+      // Check if Redis is available before attempting connection
       console.log(`Connecting to Redis with URL: ${redisUrl}`);
-      this.client = new Redis(redisUrl);
+      this.client = new Redis(redisUrl, {
+        // Reduce maxRetriesPerRequest to avoid long timeouts
+        maxRetriesPerRequest: 3,
+        connectTimeout: 5000, // 5 seconds timeout for initial connection
+        retryStrategy: (times) => {
+          // After 5 retries, fall back to in-memory
+          if (times > 5) {
+            console.log(
+              "Redis connection failed after 5 retries, falling back to in-memory store"
+            );
+            this.useInMemory = true;
+            return null; // Stop retrying
+          }
+          const delay = Math.min(times * 100, 2000);
+          console.log(
+            `Redis connection retry attempt ${times} with delay ${delay}ms`
+          );
+          return delay;
+        },
+        reconnectOnError: (err) => {
+          console.error("Redis reconnection error:", err.message);
+          // If we get a critical error, switch to in-memory mode
+          if (
+            err.message.includes("ECONNREFUSED") ||
+            err.message.includes("Connection timeout") ||
+            err.message.includes("ETIMEDOUT")
+          ) {
+            console.log("Critical Redis error, switching to in-memory mode");
+            this.useInMemory = true;
+            return false; // Don't auto-reconnect
+          }
+          return true; // Auto-reconnect for other errors
+        },
+      });
+
+      // Add event listeners for better error handling
+      this.client.on("error", (err) => {
+        console.error("Redis client error:", err.message);
+        if (
+          !this.useInMemory &&
+          (err.message.includes("ECONNREFUSED") ||
+            err.message.includes("Connection timeout") ||
+            err.message.includes("ETIMEDOUT"))
+        ) {
+          console.log(
+            "Switching to in-memory Redis service due to connection error"
+          );
+          this.useInMemory = true;
+        }
+      });
+
+      this.client.on("connect", () => {
+        console.log("Connected to Redis successfully");
+      });
+
+      // Test connection immediately
+      this.client
+        .ping()
+        .then(() => {
+          console.log("Redis connection verified with PING");
+        })
+        .catch((err) => {
+          console.error("Redis PING failed:", err.message);
+          this.useInMemory = true;
+        });
+
       console.log("Redis service initialized successfully");
     } catch (error) {
       console.error("Redis service initialization error:", error);
@@ -85,6 +151,11 @@ class RedisService {
     }
   }
 
+  // Alias for delete to maintain compatibility
+  async del(key) {
+    return this.delete(key);
+  }
+
   async exists(key) {
     try {
       if (this.useInMemory) {
@@ -93,6 +164,23 @@ class RedisService {
       return await this.client.exists(key);
     } catch (error) {
       console.error(`Error checking existence for key ${key}:`, error);
+      throw error;
+    }
+  }
+
+  async keys(pattern) {
+    try {
+      if (this.useInMemory) {
+        const keys = Object.keys(this.inMemoryStore);
+        return keys.filter((key) => {
+          // Simple pattern matching for in-memory implementation
+          const regexPattern = pattern.replace(/\*/g, ".*");
+          return new RegExp(`^${regexPattern}$`).test(key);
+        });
+      }
+      return await this.client.keys(pattern);
+    } catch (error) {
+      console.error(`Error getting keys for pattern ${pattern}:`, error);
       throw error;
     }
   }
