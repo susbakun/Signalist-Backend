@@ -55,12 +55,22 @@ exports.createSignal = async (req, res) => {
       publisher,
     } = req.body;
 
+    // Ensure numeric values are stored with proper precision
+    const parsedEntry = parseFloat(parseFloat(entry).toFixed(8));
+    const parsedStoploss = parseFloat(parseFloat(stoploss).toFixed(8));
+
+    // Process targets to ensure proper precision
+    const parsedTargets = targets.map((target) => ({
+      ...target,
+      value: parseFloat(parseFloat(target.value).toFixed(8)),
+    }));
+
     const newSignal = {
       id: uuidv4(),
       market,
-      entry,
-      stoploss,
-      targets,
+      entry: parsedEntry,
+      stoploss: parsedStoploss,
+      targets: parsedTargets,
       openTime,
       closeTime,
       status,
@@ -112,17 +122,36 @@ exports.updateSignalStatus = async (req, res) => {
           (crypto) => crypto.symbol === marketName
         );
 
+        console.log(matchingCrypto);
+
         if (matchingCrypto) {
-          const currentPrice = parseFloat(matchingCrypto.price);
+          // Ensure price is parsed with fixed precision
+          const currentPrice = parseFloat(
+            parseFloat(matchingCrypto.price).toFixed(8)
+          );
           let score = 0;
 
           // Check if price hit any targets and update publisher score
           signal.targets = signal.targets.map((target) => {
-            if (!target.touched && currentPrice >= target.value) {
+            // Ensure target value has fixed precision for comparison
+            const targetValue = parseFloat(parseFloat(target.value).toFixed(8));
+
+            // Determine if this is an upward or downward target
+            // If target value is greater than entry, it's an upward target (hit when price rises)
+            // If target value is less than entry, it's a downward target (hit when price falls)
+            const isUpwardTarget = targetValue > signal.entry;
+
+            // For upward targets, check if price has risen above target
+            // For downward targets, check if price has fallen below target
+            const isTargetHit = isUpwardTarget
+              ? currentPrice >= targetValue // Upward target hit when price rises above target
+              : currentPrice <= targetValue; // Downward target hit when price falls below target
+
+            if (!target.touched && isTargetHit) {
               score += 1;
-              return { ...target, touched: true };
+              return { ...target, touched: true, value: targetValue };
             }
-            return target;
+            return { ...target, value: targetValue };
           });
 
           // Update publisher score if targets were hit
