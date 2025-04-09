@@ -7,7 +7,7 @@ const s3Client = new S3Client({
   region: "default",
   endpoint: process.env.LIARA_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.LIARA_ACCESS_KEY,
+    accessKeyId: process.env.LIARA_BUCKET_ACCESS_KEY,
     secretAccessKey: process.env.LIARA_SECRET_KEY,
   },
 });
