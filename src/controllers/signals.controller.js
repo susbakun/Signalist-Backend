@@ -1,5 +1,16 @@
 const { v4: uuidv4 } = require("uuid");
 const redisService = require("../services/redis.service");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+
+// Initialize S3 client
+const s3Client = new S3Client({
+  region: "default",
+  endpoint: process.env.LIARA_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.LIARA_ACCESS_KEY,
+    secretAccessKey: process.env.LIARA_SECRET_KEY,
+  },
+});
 
 // Helper function to get signal by ID
 async function getSignalFromRedis(signalId) {
@@ -122,8 +133,6 @@ exports.updateSignalStatus = async (req, res) => {
           (crypto) => crypto.symbol === marketName
         );
 
-        console.log(matchingCrypto);
-
         if (matchingCrypto) {
           // Ensure price is parsed with fixed precision
           const currentPrice = parseFloat(
@@ -229,5 +238,26 @@ exports.deleteSignal = async (req, res) => {
   } catch (error) {
     console.error("Error deleting signal:", error);
     res.status(500).json({ message: "Error deleting signal" });
+  }
+};
+
+// Upload image to Liara
+exports.uploadImage = async (req, res) => {
+  try {
+    const file = req.file;
+    const params = {
+      Bucket: process.env.LIARA_BUCKET_NAME,
+      Key: `${uuidv4()}-${file.originalname}`,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    };
+
+    await s3Client.send(new PutObjectCommand(params));
+
+    const imageUrl = `${process.env.LIARA_ENDPOINT}/${process.env.LIARA_BUCKET_NAME}/${params.Key}`;
+    res.status(200).json({ url: imageUrl });
+  } catch (error) {
+    console.error("Error uploading image:", error);
+    res.status(500).json({ message: "Error uploading image" });
   }
 };
