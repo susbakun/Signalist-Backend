@@ -41,13 +41,13 @@ exports.getPostById = async (req, res) => {
 // Create a new post
 exports.createPost = async (req, res) => {
   try {
-    const { content, isPremium, publisher, postImageId } = req.body;
+    const { content, isPremium, publisher, postImageHref } = req.body;
     const newPost = {
       id: uuidv4(),
       content,
       isPremium,
       publisher,
-      postImageId,
+      postImageHref,
       date: new Date().toISOString(),
       likes: [],
       dislikes: [],
@@ -69,13 +69,13 @@ exports.updatePost = async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const { content, postImageId, removePostImage } = req.body;
+    const { content, postImageHref, removePostImage } = req.body;
     post.content = content;
 
     if (removePostImage) {
-      delete post.postImageId;
-    } else if (postImageId) {
-      post.postImageId = postImageId;
+      delete post.postImageHref;
+    } else if (postImageHref) {
+      post.postImageHref = postImageHref;
     }
 
     await redisService.set(`post:${post.id}`, JSON.stringify(post));

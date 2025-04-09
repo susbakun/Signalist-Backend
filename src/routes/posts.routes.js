@@ -66,7 +66,7 @@ router.get("/:id", async (req, res) => {
 // Create a new post
 router.post("/", async (req, res) => {
   try {
-    const { content, publisher, isPremium, postImageId } = req.body;
+    const { content, publisher, isPremium, postImageHref } = req.body;
 
     if (!content || !publisher) {
       return res.status(400).json({
@@ -87,8 +87,8 @@ router.post("/", async (req, res) => {
       date: new Date().getTime(),
     };
 
-    if (postImageId) {
-      newPost.postImageId = postImageId;
+    if (postImageHref) {
+      newPost.postImageHref = postImageHref;
     }
 
     posts.push(newPost);
@@ -113,7 +113,7 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { content, postImageId, removePostImage } = req.body;
+    const { content, postImageHref, removePostImage } = req.body;
 
     if (!content) {
       return res.status(400).json({
@@ -139,12 +139,12 @@ router.put("/:id", async (req, res) => {
       date: new Date().getTime(),
     };
 
-    if (postImageId) {
-      posts[postIndex].postImageId = postImageId;
+    if (postImageHref) {
+      posts[postIndex].postImageHref = postImageHref;
     }
 
     if (removePostImage) {
-      posts[postIndex].postImageId = "";
+      delete posts[postIndex].postImageHref;
     }
 
     await savePosts(posts);

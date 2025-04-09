@@ -32,7 +32,7 @@ router.post(
     body("publisher.username").isString(),
     body("publisher.name").isString(),
     body("publisher.imageUrl").isString(),
-    body("postImageId").optional().isString(),
+    body("postImageHref").optional().isString(),
   ],
   validateRequest,
   createPost
@@ -44,7 +44,7 @@ router.put(
   [
     param("id").isString(),
     body("content").isString().notEmpty(),
-    body("postImageId").optional().isString(),
+    body("postImageHref").optional().isString(),
     body("removePostImage").optional().isBoolean(),
   ],
   validateRequest,
