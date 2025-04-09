@@ -246,7 +246,7 @@ exports.uploadImage = async (req, res) => {
   try {
     const file = req.file;
     const params = {
-      Bucket: process.env.LIARA_BUCKET_NAME,
+      Bucket: "signals",
       Key: `${uuidv4()}-${file.originalname}`,
       Body: file.buffer,
       ContentType: file.mimetype,
@@ -254,7 +254,7 @@ exports.uploadImage = async (req, res) => {
 
     await s3Client.send(new PutObjectCommand(params));
 
-    const imageUrl = `${process.env.LIARA_ENDPOINT}/${process.env.LIARA_BUCKET_NAME}/${params.Key}`;
+    const imageUrl = `${process.env.LIARA_ENDPOINT}/signals/${params.Key}`;
     res.status(200).json({ url: imageUrl });
   } catch (error) {
     console.error("Error uploading image:", error);
