@@ -89,37 +89,49 @@ exports.updateSignalStatus = async (req, res) => {
     }
 
     const { cryptoData } = req.body;
+    const currentTime = new Date().getTime();
 
-    // Logic to update signal status based on cryptoData
-    // This would depend on your specific business logic
-    // For example, checking if current price has hit targets or stoploss
+    // Handle time-based status transitions
+    if (
+      signal.status === "not_opened" &&
+      currentTime - signal.openTime >= -1000
+    ) {
+      signal.status = "open";
+    }
 
-    // For now, we'll just update the status if provided
-    if (cryptoData && cryptoData.length > 0) {
-      // Find the crypto that matches the signal's market
-      const matchingCrypto = cryptoData.find(
-        (crypto) => crypto.uuid === signal.market.uuid
-      );
+    // Handle price-based status transitions and target updates
+    if (signal.status === "open" && currentTime - signal.closeTime >= -1000) {
+      signal.status = "closed";
 
-      if (matchingCrypto) {
-        const currentPrice = parseFloat(matchingCrypto.price);
+      if (cryptoData && cryptoData.length > 0) {
+        // Parse market name to match with crypto symbol (e.g., "BTC/USDT" -> "BTC")
+        const marketName = signal.market.name.split("/")[0];
 
-        // Check if price hit stoploss
-        if (currentPrice <= signal.stoploss) {
-          signal.status = "closed";
-        }
+        // Find the crypto that matches the signal's market
+        const matchingCrypto = cryptoData.find(
+          (crypto) => crypto.symbol === marketName
+        );
 
-        // Check if price hit any targets
-        signal.targets = signal.targets.map((target) => {
-          if (!target.touched && currentPrice >= target.value) {
-            return { ...target, touched: true };
+        if (matchingCrypto) {
+          const currentPrice = parseFloat(matchingCrypto.price);
+          let score = 0;
+
+          // Check if price hit any targets and update publisher score
+          signal.targets = signal.targets.map((target) => {
+            if (!target.touched && currentPrice >= target.value) {
+              score += 1;
+              return { ...target, touched: true };
+            }
+            return target;
+          });
+
+          // Update publisher score if targets were hit
+          if (score > 0) {
+            signal.publisher = {
+              ...signal.publisher,
+              score: signal.publisher.score + score,
+            };
           }
-          return target;
-        });
-
-        // If all targets are touched, close the signal
-        if (signal.targets.every((target) => target.touched)) {
-          signal.status = "closed";
         }
       }
     }
