@@ -62,7 +62,7 @@ exports.createSignal = async (req, res) => {
       status,
       isPremium,
       description,
-      chartImageId,
+      chartImageHref,
       publisher,
     } = req.body;
 
@@ -88,7 +88,7 @@ exports.createSignal = async (req, res) => {
       date: new Date().getTime(),
       likes: [],
       description,
-      chartImageId,
+      chartImageHref,
       isPremium,
       publisher,
     };
