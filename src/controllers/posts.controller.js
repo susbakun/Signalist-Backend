@@ -1,5 +1,16 @@
 const { v4: uuidv4 } = require("uuid");
 const redisService = require("../services/redis.service");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+
+// Initialize S3 client
+const s3Client = new S3Client({
+  region: "default",
+  endpoint: process.env.LIARA_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.LIARA_BUCKET_ACCESS_KEY,
+    secretAccessKey: process.env.LIARA_SECRET_KEY,
+  },
+});
 
 // Helper function to get post by ID
 async function getPostFromRedis(postId) {
@@ -271,5 +282,26 @@ exports.dislikeComment = async (req, res) => {
   } catch (error) {
     console.error("Error disliking comment:", error);
     res.status(500).json({ message: "Error disliking comment" });
+  }
+};
+
+// Upload image to Liara
+exports.uploadImage = async (req, res) => {
+  try {
+    const file = req.file;
+    const params = {
+      Bucket: "posts",
+      Key: `${uuidv4()}-${file.originalname}`,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    };
+
+    await s3Client.send(new PutObjectCommand(params));
+
+    const imageUrl = `${process.env.LIARA_ENDPOINT}/posts/${params.Key}`;
+    res.status(200).json({ url: imageUrl });
+  } catch (error) {
+    console.error("Error uploading image:", error);
+    res.status(500).json({ message: "Error uploading image" });
   }
 };

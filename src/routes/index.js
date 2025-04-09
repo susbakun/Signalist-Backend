@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require("multer");
 const upload = multer();
 const signalsController = require("../controllers/signals.controller");
+const postsController = require("../controllers/posts.controller");
 
 // Import route modules
 const dataRoutes = require("./data.routes");
@@ -14,8 +15,27 @@ router.use("/data", dataRoutes);
 router.use("/posts", postsRoutes);
 router.use("/signals", signalsRoutes);
 
-// Direct upload route at the root level
-router.post("/upload", upload.single("file"), signalsController.uploadImage);
+// Upload routes for different image types
+router.post(
+  "/upload/signals",
+  upload.single("file"),
+  signalsController.uploadImage
+);
+router.post(
+  "/upload/posts",
+  upload.single("file"),
+  postsController.uploadImage
+);
+
+// Legacy route for backward compatibility
+router.post("/upload", upload.single("file"), (req, res) => {
+  const type = req.query.type || "signals";
+  if (type === "posts") {
+    return postsController.uploadImage(req, res);
+  } else {
+    return signalsController.uploadImage(req, res);
+  }
+});
 
 // Health check endpoint
 router.get("/health", (req, res) => {
