@@ -2,7 +2,6 @@ const { v4: uuidv4 } = require("uuid");
 const redisService = require("../services/redis.service");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 
-// Initialize S3 client
 const s3Client = new S3Client({
   region: "default",
   endpoint: process.env.LIARA_ENDPOINT,
@@ -12,7 +11,6 @@ const s3Client = new S3Client({
   },
 });
 
-// Helper function to get signal by ID
 async function getSignalFromRedis(signalId) {
   const signal = await redisService.get(`signal:${signalId}`);
   return signal ? JSON.parse(signal) : null;
