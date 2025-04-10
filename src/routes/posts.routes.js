@@ -3,24 +3,28 @@ const router = express.Router();
 const { v4: uuidv4 } = require("uuid");
 const redisService = require("../services/redis.service");
 
-// Redis key for posts collection
-const POSTS_KEY = "posts";
-
-// Helper function to get all posts
-async function getAllPosts() {
-  const posts = await redisService.get(POSTS_KEY);
-  return posts || [];
-}
-
-// Helper function to save all posts
-async function savePosts(posts) {
-  return await redisService.set(POSTS_KEY, posts);
+// Helper function to get post by ID
+async function getPostById(id) {
+  const post = await redisService.get(`post:${id}`);
+  return post ? JSON.parse(post) : null;
 }
 
 // Get all posts
 router.get("/", async (req, res) => {
   try {
-    const posts = await getAllPosts();
+    const postKeys = await redisService.keys("post:*");
+    const posts = [];
+
+    for (const key of postKeys) {
+      const postJson = await redisService.get(key);
+      if (postJson) {
+        posts.push(JSON.parse(postJson));
+      }
+    }
+
+    // Sort posts by date (newest first)
+    posts.sort((a, b) => b.date - a.date);
+
     return res.status(200).json({
       success: true,
       data: posts,
@@ -39,8 +43,7 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const posts = await getAllPosts();
-    const post = posts.find((p) => p.id === id);
+    const post = await getPostById(id);
 
     if (!post) {
       return res.status(404).json({
@@ -75,8 +78,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const posts = await getAllPosts();
-
     const newPost = {
       id: uuidv4(),
       content,
@@ -91,8 +92,8 @@ router.post("/", async (req, res) => {
       newPost.postImageHref = postImageHref;
     }
 
-    posts.push(newPost);
-    await savePosts(posts);
+    // Save post with its own key
+    await redisService.set(`post:${newPost.id}`, JSON.stringify(newPost));
 
     return res.status(201).json({
       success: true,
@@ -122,10 +123,9 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    const posts = await getAllPosts();
-    const postIndex = posts.findIndex((p) => p.id === id);
+    const post = await getPostById(id);
 
-    if (postIndex === -1) {
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: `Post with ID ${id} not found`,
@@ -133,26 +133,23 @@ router.put("/:id", async (req, res) => {
     }
 
     // Update the post
-    posts[postIndex] = {
-      ...posts[postIndex],
-      content,
-      date: new Date().getTime(),
-    };
+    post.content = content;
+    post.date = new Date().getTime(); // Update timestamp
 
     if (postImageHref) {
-      posts[postIndex].postImageHref = postImageHref;
+      post.postImageHref = postImageHref;
     }
 
     if (removePostImage) {
-      delete posts[postIndex].postImageHref;
+      delete post.postImageHref;
     }
 
-    await savePosts(posts);
+    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
       message: "Post updated successfully",
-      data: posts[postIndex],
+      data: post,
     });
   } catch (error) {
     console.error("Error updating post:", error);
@@ -168,17 +165,16 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const posts = await getAllPosts();
-    const filteredPosts = posts.filter((p) => p.id !== id);
+    const exists = await redisService.exists(`post:${id}`);
 
-    if (posts.length === filteredPosts.length) {
+    if (!exists) {
       return res.status(404).json({
         success: false,
         message: `Post with ID ${id} not found`,
       });
     }
 
-    await savePosts(filteredPosts);
+    await redisService.del(`post:${id}`);
 
     return res.status(200).json({
       success: true,
@@ -207,32 +203,30 @@ router.post("/:id/like", async (req, res) => {
       });
     }
 
-    const posts = await getAllPosts();
-    const postIndex = posts.findIndex((p) => p.id === id);
+    const post = await getPostById(id);
 
-    if (postIndex === -1) {
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: `Post with ID ${id} not found`,
       });
     }
 
-    // Check if user already liked the post
-    if (posts[postIndex].likes.some((u) => u.username === user.username)) {
-      return res.status(400).json({
-        success: false,
-        message: "User already liked this post",
-      });
+    // Check if already liked
+    const alreadyLiked = post.likes.some(
+      (like) => like.username === user.username
+    );
+
+    if (!alreadyLiked) {
+      post.likes.push(user);
     }
 
-    // Add user to likes
-    posts[postIndex].likes.push(user);
-    await savePosts(posts);
+    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
       message: "Post liked successfully",
-      data: posts[postIndex],
+      data: post,
     });
   } catch (error) {
     console.error("Error liking post:", error);
@@ -257,10 +251,9 @@ router.post("/:id/dislike", async (req, res) => {
       });
     }
 
-    const posts = await getAllPosts();
-    const postIndex = posts.findIndex((p) => p.id === id);
+    const post = await getPostById(id);
 
-    if (postIndex === -1) {
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: `Post with ID ${id} not found`,
@@ -268,15 +261,13 @@ router.post("/:id/dislike", async (req, res) => {
     }
 
     // Remove user from likes
-    posts[postIndex].likes = posts[postIndex].likes.filter(
-      (u) => u.username !== user.username
-    );
-    await savePosts(posts);
+    post.likes = post.likes.filter((u) => u.username !== user.username);
+    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
       message: "Post disliked successfully",
-      data: posts[postIndex],
+      data: post,
     });
   } catch (error) {
     console.error("Error disliking post:", error);
@@ -301,10 +292,9 @@ router.post("/:id/comments", async (req, res) => {
       });
     }
 
-    const posts = await getAllPosts();
-    const postIndex = posts.findIndex((p) => p.id === id);
+    const post = await getPostById(id);
 
-    if (postIndex === -1) {
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: `Post with ID ${id} not found`,
@@ -320,8 +310,8 @@ router.post("/:id/comments", async (req, res) => {
       likes: [],
     };
 
-    posts[postIndex].comments.push(newComment);
-    await savePosts(posts);
+    post.comments.push(newComment);
+    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(201).json({
       success: true,
@@ -343,17 +333,16 @@ router.delete("/:id/comments/:commentId", async (req, res) => {
   try {
     const { id, commentId } = req.params;
 
-    const posts = await getAllPosts();
-    const postIndex = posts.findIndex((p) => p.id === id);
+    const post = await getPostById(id);
 
-    if (postIndex === -1) {
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: `Post with ID ${id} not found`,
       });
     }
 
-    const commentIndex = posts[postIndex].comments.findIndex(
+    const commentIndex = post.comments.findIndex(
       (c) => c.commentId === commentId
     );
 
@@ -365,10 +354,8 @@ router.delete("/:id/comments/:commentId", async (req, res) => {
     }
 
     // Remove the comment
-    posts[postIndex].comments = posts[postIndex].comments.filter(
-      (c) => c.commentId !== commentId
-    );
-    await savePosts(posts);
+    post.comments = post.comments.filter((c) => c.commentId !== commentId);
+    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
@@ -397,17 +384,16 @@ router.post("/:id/comments/:commentId/like", async (req, res) => {
       });
     }
 
-    const posts = await getAllPosts();
-    const postIndex = posts.findIndex((p) => p.id === id);
+    const post = await getPostById(id);
 
-    if (postIndex === -1) {
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: `Post with ID ${id} not found`,
       });
     }
 
-    const commentIndex = posts[postIndex].comments.findIndex(
+    const commentIndex = post.comments.findIndex(
       (c) => c.commentId === commentId
     );
 
@@ -420,7 +406,7 @@ router.post("/:id/comments/:commentId/like", async (req, res) => {
 
     // Check if user already liked the comment
     if (
-      posts[postIndex].comments[commentIndex].likes.some(
+      post.comments[commentIndex].likes.some(
         (u) => u.username === user.username
       )
     ) {
@@ -431,13 +417,13 @@ router.post("/:id/comments/:commentId/like", async (req, res) => {
     }
 
     // Add user to comment likes
-    posts[postIndex].comments[commentIndex].likes.push(user);
-    await savePosts(posts);
+    post.comments[commentIndex].likes.push(user);
+    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
       message: "Comment liked successfully",
-      data: posts[postIndex].comments[commentIndex],
+      data: post.comments[commentIndex],
     });
   } catch (error) {
     console.error("Error liking comment:", error);
@@ -462,17 +448,16 @@ router.post("/:id/comments/:commentId/dislike", async (req, res) => {
       });
     }
 
-    const posts = await getAllPosts();
-    const postIndex = posts.findIndex((p) => p.id === id);
+    const post = await getPostById(id);
 
-    if (postIndex === -1) {
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: `Post with ID ${id} not found`,
       });
     }
 
-    const commentIndex = posts[postIndex].comments.findIndex(
+    const commentIndex = post.comments.findIndex(
       (c) => c.commentId === commentId
     );
 
@@ -484,21 +469,84 @@ router.post("/:id/comments/:commentId/dislike", async (req, res) => {
     }
 
     // Remove user from comment likes
-    posts[postIndex].comments[commentIndex].likes = posts[postIndex].comments[
+    post.comments[commentIndex].likes = post.comments[
       commentIndex
     ].likes.filter((u) => u.username !== user.username);
-    await savePosts(posts);
+    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
       message: "Comment disliked successfully",
-      data: posts[postIndex].comments[commentIndex],
+      data: post.comments[commentIndex],
     });
   } catch (error) {
     console.error("Error disliking comment:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to dislike comment",
+      error: error.message,
+    });
+  }
+});
+
+// Migration route to convert old format to new format
+router.post("/_migrate_posts", async (req, res) => {
+  try {
+    // Check if old format exists
+    const oldPosts = await redisService.get("posts");
+
+    if (!oldPosts) {
+      return res.status(404).json({
+        success: false,
+        message: "No posts to migrate",
+      });
+    }
+
+    // Parse old posts array
+    let postsArray = [];
+    try {
+      postsArray = JSON.parse(oldPosts);
+    } catch (err) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid posts data format",
+      });
+    }
+
+    if (!Array.isArray(postsArray)) {
+      return res.status(400).json({
+        success: false,
+        message: "Posts data is not an array",
+      });
+    }
+
+    // Migrate each post to new format
+    const migrationResults = [];
+    for (const post of postsArray) {
+      if (!post.id) {
+        console.warn("Skipping post without ID:", post);
+        migrationResults.push({ post, status: "skipped", reason: "No ID" });
+        continue;
+      }
+
+      // Save post with its own key
+      await redisService.set(`post:${post.id}`, JSON.stringify(post));
+      migrationResults.push({ id: post.id, status: "migrated" });
+    }
+
+    // Remove old posts key
+    await redisService.del("posts");
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully migrated ${migrationResults.filter((r) => r.status === "migrated").length} posts`,
+      results: migrationResults,
+    });
+  } catch (error) {
+    console.error("Error migrating posts:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to migrate posts",
       error: error.message,
     });
   }
