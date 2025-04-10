@@ -404,8 +404,29 @@ exports.blockUser = async (req, res) => {
       imageUrl: blocked.imageUrl,
     });
 
-    // Save updated user to Redis
+    // Remove blocked user from blocker's followings
+    blocker.followings = blocker.followings.filter(
+      (user) => user.username !== blockedUsername
+    );
+
+    // Remove blocked user from blocker's followers
+    blocker.followers = blocker.followers.filter(
+      (user) => user.username !== blockedUsername
+    );
+
+    // Remove blocker from blocked user's followings
+    blocked.followings = blocked.followings.filter(
+      (user) => user.username !== blockerUsername
+    );
+
+    // Remove blocker from blocked user's followers
+    blocked.followers = blocked.followers.filter(
+      (user) => user.username !== blockerUsername
+    );
+
+    // Save updated users to Redis
     await redisService.set(`user:${blockerUsername}`, JSON.stringify(blocker));
+    await redisService.set(`user:${blockedUsername}`, JSON.stringify(blocked));
 
     // Return updated user
     const { password: _, ...safeUser } = blocker;
