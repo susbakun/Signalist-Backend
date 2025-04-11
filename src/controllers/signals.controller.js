@@ -129,21 +129,47 @@ exports.updateSignalStatus = async (req, res) => {
         const wallexResponse = await fetch("https://api.wallex.ir/v1/markets");
         const wallexData = await wallexResponse.json();
 
-        if (
-          wallexData &&
-          wallexData.result &&
-          Array.isArray(wallexData.result)
-        ) {
-          // Find the matching market in Wallex data
-          const matchingMarket = wallexData.result.find(
-            (market) =>
-              market.baseAsset.toLowerCase() === marketName.toLowerCase()
+        console.log(`Market name from signal: ${marketName}`);
+
+        if (wallexData && wallexData.result && wallexData.result.symbols) {
+          // Symbols is an object with symbol names as keys, not an array
+          const symbols = wallexData.result.symbols;
+          console.log(
+            `Found ${Object.keys(symbols).length} symbols in Wallex API response`
           );
 
-          if (matchingMarket) {
-            // Ensure price is parsed with fixed precision
-            const currentPrice = parseFloat(
-              parseFloat(matchingMarket.stats.lastPrice).toFixed(8)
+          // Find a symbol that matches our market
+          // We need to find a symbol where baseAsset matches our market symbol
+          // We'll look through all symbols
+          let matchingSymbol = null;
+          let currentPrice = null;
+
+          // Iterate through the symbols object to find a match
+          Object.keys(symbols).forEach((symbolKey) => {
+            const symbolData = symbols[symbolKey];
+            if (
+              symbolData.baseAsset &&
+              symbolData.baseAsset.toLowerCase() === marketName.toLowerCase()
+            ) {
+              console.log(
+                `Found matching symbol: ${symbolKey} with baseAsset: ${symbolData.baseAsset}`
+              );
+              matchingSymbol = symbolData;
+              // Typically the stats.lastPrice would have the current price
+              if (symbolData.stats && symbolData.stats.lastPrice) {
+                currentPrice = parseFloat(
+                  parseFloat(symbolData.stats.lastPrice).toFixed(8)
+                );
+                console.log(
+                  `Current price for ${symbolData.baseAsset}: ${currentPrice}`
+                );
+              }
+            }
+          });
+
+          if (matchingSymbol && currentPrice !== null) {
+            console.log(
+              `Processing ${signal.targets.length} targets with price ${currentPrice}`
             );
             let score = 0;
 
