@@ -546,3 +546,69 @@ exports.uploadImage = async (req, res) => {
     res.status(500).json({ message: "Error uploading profile image" });
   }
 };
+
+// Update user score based on signal targets
+exports.updateUserScore = async (req, res) => {
+  const { username } = req.params;
+  const { signal } = req.body;
+
+  if (!username || !signal) {
+    return res.status(400).json({
+      success: false,
+      message: "Username and signal data are required",
+    });
+  }
+
+  try {
+    // Find user
+    const user = await findUserByUsername(username);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Only update scores for publishers of the signal
+    if (user.username === signal.publisher.username) {
+      const currentTime = new Date().getTime();
+
+      // Check if the signal was recently closed (within the last 70 seconds)
+      const isSignalRecentlyClosed =
+        currentTime - signal.closeTime >= 0 &&
+        currentTime - signal.closeTime <= 70000;
+
+      if (isSignalRecentlyClosed && signal.status === "closed") {
+        // Count touched targets and update score
+        let scoreIncrease = 0;
+
+        signal.targets.forEach((target) => {
+          if (target.touched) {
+            scoreIncrease += 1;
+          }
+        });
+
+        if (scoreIncrease > 0) {
+          user.score += scoreIncrease;
+          console.log(
+            `Updated user ${username} score by +${scoreIncrease} to ${user.score}`
+          );
+
+          // Save updated user to Redis
+          await redisService.set(`user:${username}`, JSON.stringify(user));
+        }
+      }
+    }
+
+    // Return updated user
+    const { password: _, ...safeUser } = user;
+    res.json(safeUser);
+  } catch (error) {
+    console.error("Error updating user score:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error updating user score",
+    });
+  }
+};

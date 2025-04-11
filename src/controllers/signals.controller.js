@@ -107,7 +107,6 @@ exports.updateSignalStatus = async (req, res) => {
       return res.status(404).json({ message: "Signal not found" });
     }
 
-    const { cryptoData } = req.body;
     const currentTime = new Date().getTime();
 
     // Handle time-based status transitions
@@ -122,53 +121,84 @@ exports.updateSignalStatus = async (req, res) => {
     if (signal.status === "open" && currentTime - signal.closeTime >= -1000) {
       signal.status = "closed";
 
-      if (cryptoData && cryptoData.length > 0) {
+      try {
         // Parse market name to match with crypto symbol (e.g., "BTC/USDT" -> "BTC")
         const marketName = signal.market.name.split("/")[0];
 
-        // Find the crypto that matches the signal's market
-        const matchingCrypto = cryptoData.find(
-          (crypto) => crypto.symbol === marketName
-        );
+        // Fetch current price data from Wallex API
+        const wallexResponse = await fetch("https://api.wallex.ir/v1/markets");
+        const wallexData = await wallexResponse.json();
 
-        if (matchingCrypto) {
-          // Ensure price is parsed with fixed precision
-          const currentPrice = parseFloat(
-            parseFloat(matchingCrypto.price).toFixed(8)
+        if (
+          wallexData &&
+          wallexData.result &&
+          Array.isArray(wallexData.result)
+        ) {
+          // Find the matching market in Wallex data
+          const matchingMarket = wallexData.result.find(
+            (market) =>
+              market.baseAsset.toLowerCase() === marketName.toLowerCase()
           );
-          let score = 0;
 
-          // Check if price hit any targets and update publisher score
-          signal.targets = signal.targets.map((target) => {
-            // Ensure target value has fixed precision for comparison
-            const targetValue = parseFloat(parseFloat(target.value).toFixed(8));
+          if (matchingMarket) {
+            // Ensure price is parsed with fixed precision
+            const currentPrice = parseFloat(
+              parseFloat(matchingMarket.stats.lastPrice).toFixed(8)
+            );
+            let score = 0;
 
-            // Determine if this is an upward or downward target
-            // If target value is greater than entry, it's an upward target (hit when price rises)
-            // If target value is less than entry, it's a downward target (hit when price falls)
-            const isUpwardTarget = targetValue > signal.entry;
+            // Check if price hit any targets and update publisher score
+            signal.targets = signal.targets.map((target) => {
+              // Ensure target value has fixed precision for comparison
+              const targetValue = parseFloat(
+                parseFloat(target.value).toFixed(8)
+              );
 
-            // For upward targets, check if price has risen above target
-            // For downward targets, check if price has fallen below target
-            const isTargetHit = isUpwardTarget
-              ? currentPrice >= targetValue // Upward target hit when price rises above target
-              : currentPrice <= targetValue; // Downward target hit when price falls below target
+              // Determine if this is an upward or downward target
+              // If target value is greater than entry, it's an upward target (hit when price rises)
+              // If target value is less than entry, it's a downward target (hit when price falls)
+              const isUpwardTarget = targetValue > signal.entry;
 
-            if (!target.touched && isTargetHit) {
-              score += 1;
-              return { ...target, touched: true, value: targetValue };
+              // For upward targets, check if price has risen above target
+              // For downward targets, check if price has fallen below target
+              const isTargetHit = isUpwardTarget
+                ? currentPrice >= targetValue // Upward target hit when price rises above target
+                : currentPrice <= targetValue; // Downward target hit when price falls below target
+
+              if (!target.touched && isTargetHit) {
+                score += 1;
+                return { ...target, touched: true, value: targetValue };
+              }
+              return { ...target, value: targetValue };
+            });
+
+            // Update publisher score if targets were hit
+            if (score > 0) {
+              signal.publisher = {
+                ...signal.publisher,
+                score: signal.publisher.score + score,
+              };
+
+              // Update the user's score in Redis as well
+              try {
+                const userKey = `user:${signal.publisher.username}`;
+                const userExists = await redisService.exists(userKey);
+
+                if (userExists) {
+                  const userData = JSON.parse(await redisService.get(userKey));
+                  userData.score += score;
+                  await redisService.set(userKey, JSON.stringify(userData));
+                }
+              } catch (userError) {
+                console.error("Error updating user score:", userError);
+                // Continue with the signal update even if updating the user fails
+              }
             }
-            return { ...target, value: targetValue };
-          });
-
-          // Update publisher score if targets were hit
-          if (score > 0) {
-            signal.publisher = {
-              ...signal.publisher,
-              score: signal.publisher.score + score,
-            };
           }
         }
+      } catch (priceError) {
+        console.error("Error fetching price data:", priceError);
+        // Continue with the status update even if price check fails
       }
     }
 

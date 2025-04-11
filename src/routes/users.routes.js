@@ -29,4 +29,7 @@ router.put("/:username/bookmarks", usersController.updateBookmarks);
 // Update profile
 router.put("/:username", usersController.updateProfile);
 
+// Update user score based on signal targets
+router.put("/:username/score", usersController.updateUserScore);
+
 module.exports = router;
