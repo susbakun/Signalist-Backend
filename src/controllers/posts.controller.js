@@ -21,14 +21,34 @@ async function getPostFromRedis(postId) {
 // Get all posts
 exports.getPosts = async (req, res) => {
   try {
+    // Extract pagination parameters from query
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
     const postKeys = await redisService.keys("post:*");
-    const posts = await Promise.all(
+    const allPosts = await Promise.all(
       postKeys.map(async (key) => {
         const post = await redisService.get(key);
         return JSON.parse(post);
       })
     );
-    res.json({ data: posts });
+
+    // Sort posts by date (newest first)
+    allPosts.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Implement pagination
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+    const paginatedPosts = allPosts.slice(startIndex, endIndex);
+
+    // Check if there are more posts available
+    const hasMore = endIndex < allPosts.length;
+
+    res.json({
+      data: paginatedPosts,
+      totalCount: allPosts.length,
+      hasMore: hasMore,
+    });
   } catch (error) {
     console.error("Error fetching posts:", error);
     res.status(500).json({ message: "Error fetching posts" });

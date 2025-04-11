@@ -19,14 +19,34 @@ async function getSignalFromRedis(signalId) {
 // Get all signals
 exports.getSignals = async (req, res) => {
   try {
+    // Extract pagination parameters from query
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
     const signalKeys = await redisService.keys("signal:*");
-    const signals = await Promise.all(
+    const allSignals = await Promise.all(
       signalKeys.map(async (key) => {
         const signal = await redisService.get(key);
         return JSON.parse(signal);
       })
     );
-    res.json({ data: signals });
+
+    // Sort signals by date (newest first)
+    allSignals.sort((a, b) => b.date - a.date);
+
+    // Implement pagination
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+    const paginatedSignals = allSignals.slice(startIndex, endIndex);
+
+    // Check if there are more signals available
+    const hasMore = endIndex < allSignals.length;
+
+    res.json({
+      data: paginatedSignals,
+      totalCount: allSignals.length,
+      hasMore: hasMore,
+    });
   } catch (error) {
     console.error("Error fetching signals:", error);
     res.status(500).json({ message: "Error fetching signals" });
