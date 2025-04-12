@@ -66,10 +66,20 @@ const initialize = (socketIo) => {
 
         if (messagesJson) {
           const allMessages = JSON.parse(messagesJson);
-          const newMessages = allMessages.filter((msg) => msg.date > since);
 
-          if (newMessages.length > 0) {
-            socket.emit("syncedMessages", { roomId, messages: newMessages });
+          // Ensure each message has a unique ID
+          const messagesToSend = allMessages
+            .filter((msg) => msg.date > since)
+            .map((msg) => {
+              // Make sure each message has an ID for proper tracking
+              if (!msg.id && msg.date && msg.sender && msg.text) {
+                msg.id = `${msg.date}-${msg.sender.username}-${msg.text.substring(0, 10)}`;
+              }
+              return msg;
+            });
+
+          if (messagesToSend.length > 0) {
+            socket.emit("syncedMessages", { roomId, messages: messagesToSend });
           }
         }
       } catch (error) {
@@ -100,13 +110,26 @@ const initialize = (socketIo) => {
           return;
         }
 
+        // Store message ID to prevent duplicates
+        if (!message.id) {
+          message.id =
+            Date.now().toString() +
+            "-" +
+            Math.random().toString(36).substr(2, 9);
+        }
+
         // Queue the message for batch saving
         queueMessageForSave(roomId, message);
 
         if (isGroup) {
-          // Send to all members of the group
+          // Send to all members of the group except the sender
           console.log(`Broadcasting message to group room: ${roomId}`);
-          io.to(roomId).emit("newMessage", { roomId, message });
+          socket.to(roomId).emit("newMessage", { roomId, message });
+
+          // Also emit to the sender but with a special flag to indicate it's their own message
+          // This prevents the sender from showing duplicates
+          message.own = true;
+          socket.emit("newMessage", { roomId, message });
         } else {
           // Get recipient from roomId (format: user1_user2)
           const users = roomId.split("_");
@@ -134,7 +157,8 @@ const initialize = (socketIo) => {
             );
           }
 
-          // Also send to the sender (for multi-device support)
+          // Also send to the sender for multi-device support, but with own flag
+          message.own = true;
           socket.emit("newMessage", { roomId, message });
         }
       } catch (error) {
@@ -337,8 +361,41 @@ const processBatchSaves = async () => {
         messages = JSON.parse(existingMessagesJson);
       }
 
-      // Add all queued messages
-      messages.push(...messageQueue[roomId]);
+      // Create a map of existing message IDs for deduplication
+      const existingMessageIds = new Map();
+      messages.forEach((msg) => {
+        if (msg.id) {
+          existingMessageIds.set(msg.id, true);
+        } else if (msg.date && msg.sender && msg.text) {
+          // Create a fallback ID if the message doesn't have one
+          const fallbackId = `${msg.date}-${msg.sender.username}-${msg.text.substring(0, 10)}`;
+          existingMessageIds.set(fallbackId, true);
+          // Add the ID to the message for future reference
+          msg.id = fallbackId;
+        }
+      });
+
+      // Add only queued messages that don't already exist
+      for (const queuedMessage of messageQueue[roomId]) {
+        // Ensure each message has an ID
+        if (!queuedMessage.id && queuedMessage.date && queuedMessage.sender) {
+          queuedMessage.id = `${queuedMessage.date}-${queuedMessage.sender.username}-${queuedMessage.text.substring(0, 10)}`;
+        }
+
+        // Skip if this message already exists (by ID)
+        if (queuedMessage.id && existingMessageIds.has(queuedMessage.id)) {
+          console.log(
+            `Skipping duplicate message ${queuedMessage.id} in room ${roomId}`
+          );
+          continue;
+        }
+
+        // Add to messages and mark as existing
+        messages.push(queuedMessage);
+        if (queuedMessage.id) {
+          existingMessageIds.set(queuedMessage.id, true);
+        }
+      }
 
       // Save to Redis with a long expiry
       await redisService.set(
