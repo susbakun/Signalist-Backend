@@ -281,6 +281,10 @@ exports.createGroupConversation = async (req, res) => {
 exports.uploadImage = async (req, res) => {
   try {
     const file = req.file;
+    if (!file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
     const params = {
       Bucket: "messages",
       Key: `${uuidv4()}-${file.originalname}`,

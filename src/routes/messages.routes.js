@@ -18,16 +18,16 @@ router.get("/user/:username", messagesController.getUserConversations);
 // Get messages for a specific conversation
 router.get("/conversation/:roomId", messagesController.getConversationMessages);
 
-// Send a message to a conversation
+// Send a message
 router.post("/conversation/:roomId", messagesController.sendMessage);
 
-// Create a new direct message (DM) conversation
+// Create a direct message conversation
 router.post("/dm", messagesController.createDMConversation);
 
-// Create a new group conversation
+// Create a group conversation
 router.post("/group", messagesController.createGroupConversation);
 
 // Upload image for a message
-router.post("/upload", upload.single("image"), messagesController.uploadImage);
+router.post("/upload", upload.single("file"), messagesController.uploadImage);
 
 module.exports = router;
