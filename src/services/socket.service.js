@@ -180,9 +180,8 @@ const initialize = (socketIo) => {
           // Send to all members of the group except the sender
           socket.to(roomId).emit("newMessage", { roomId, message });
 
-          // Send to sender with own flag to prevent duplication
-          const senderMessage = { ...message, own: true };
-          socket.emit("newMessage", { roomId, message: senderMessage });
+          // Don't emit back to the sender - frontend already has this message
+          // The frontend logic will handle showing the message
         } else {
           // Get recipient from roomId (format: user1_user2)
           const users = roomId.split("_");
@@ -196,17 +195,14 @@ const initialize = (socketIo) => {
           const recipient = users.find((user) => user !== sender);
 
           if (recipient && connectedUsers[recipient]) {
+            // Send to recipient
             io.to(connectedUsers[recipient]).emit("newMessage", {
               roomId,
-              message: { ...message, own: false },
+              message,
             });
           }
 
-          // Send to sender with own flag
-          socket.emit("newMessage", {
-            roomId,
-            message: { ...message, own: true },
-          });
+          // Don't emit back to the sender - frontend already has this message
         }
       } catch (error) {
         console.error("Error sending message:", error);

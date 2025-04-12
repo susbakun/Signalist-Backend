@@ -180,7 +180,7 @@ exports.sendMessage = async (req, res) => {
           return (
             msg.sender.username === sender.username &&
             msg.text === text &&
-            now - msg.date < 10000 // Within last 10 seconds
+            now - msg.date < 30000 // Increase from 10s to 30s to catch more duplicates
           );
         });
 
@@ -219,11 +219,22 @@ exports.sendMessage = async (req, res) => {
 
     // Use socket.io to notify recipients in real-time
     if (socketService.io) {
+      // Mark the message as coming from the API to prevent duplicate processing
+      message.fromAPI = true;
+
       if (isGroup) {
-        // For group chat, broadcast to room
-        socketService.io.to(roomId).emit("newMessage", { roomId, message });
+        // For group chat, broadcast to everyone EXCEPT the sender
+        // The sender already has the message in their UI
+        const roomClients =
+          socketService.io.sockets.adapter.rooms.get(roomId) || new Set();
+        for (const clientId of roomClients) {
+          const clientSocket = socketService.io.sockets.sockets.get(clientId);
+          if (clientSocket && clientSocket.username !== sender.username) {
+            clientSocket.emit("newMessage", { roomId, message });
+          }
+        }
       } else {
-        // For DM, send to recipient
+        // For DM, send only to recipient, not back to sender
         const users = roomId.split("_");
         const recipient = users.find((user) => user !== sender.username);
 
@@ -234,13 +245,7 @@ exports.sendMessage = async (req, res) => {
           });
         }
 
-        // Also emit to the sender for multi-device support
-        if (socketService.isUserOnline(sender.username)) {
-          socketService.sendToUser(sender.username, "newMessage", {
-            roomId,
-            message,
-          });
-        }
+        // Don't emit back to the sender - they already have the message
       }
     }
 
