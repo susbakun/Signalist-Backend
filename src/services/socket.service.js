@@ -139,7 +139,6 @@ const initialize = (socketIo) => {
         );
 
         // If the message is already coming from the API, don't save again and don't broadcast
-        // This prevents double processing when a message is sent via API
         if (fromAPI) {
           console.log(
             "Message already processed by API, skipping socket processing"
@@ -147,7 +146,7 @@ const initialize = (socketIo) => {
           return;
         }
 
-        // Store message ID to prevent duplicates
+        // Ensure message has a unique ID
         if (!message.id) {
           message.id =
             Date.now().toString() +
@@ -155,18 +154,35 @@ const initialize = (socketIo) => {
             Math.random().toString(36).substr(2, 9);
         }
 
+        // Check if this message already exists in Redis before processing
+        const roomKey = `message:${roomId}`;
+        const existingMessagesJson = await redisService.get(roomKey);
+        if (existingMessagesJson) {
+          const existingMessages = JSON.parse(existingMessagesJson);
+          const isDuplicate = existingMessages.some(
+            (msg) =>
+              msg.id === message.id ||
+              (msg.sender.username === message.sender.username &&
+                msg.text === message.text &&
+                Math.abs(msg.date - message.date) < 30000) // Within 30 seconds
+          );
+
+          if (isDuplicate) {
+            console.log(`Skipping duplicate message in room ${roomId}`);
+            return;
+          }
+        }
+
         // Queue the message for batch saving
         queueMessageForSave(roomId, message);
 
         if (isGroup) {
           // Send to all members of the group except the sender
-          console.log(`Broadcasting message to group room: ${roomId}`);
           socket.to(roomId).emit("newMessage", { roomId, message });
 
-          // Also emit to the sender but with a special flag to indicate it's their own message
-          // This prevents the sender from showing duplicates
-          message.own = true;
-          socket.emit("newMessage", { roomId, message });
+          // Send to sender with own flag to prevent duplication
+          const senderMessage = { ...message, own: true };
+          socket.emit("newMessage", { roomId, message: senderMessage });
         } else {
           // Get recipient from roomId (format: user1_user2)
           const users = roomId.split("_");
@@ -179,24 +195,18 @@ const initialize = (socketIo) => {
 
           const recipient = users.find((user) => user !== sender);
 
-          console.log(`Sending message from ${sender} to ${recipient}`);
-
-          // Send to the recipient (if they're online)
           if (recipient && connectedUsers[recipient]) {
-            console.log(`Recipient ${recipient} is online, delivering message`);
             io.to(connectedUsers[recipient]).emit("newMessage", {
               roomId,
-              message,
+              message: { ...message, own: false },
             });
-          } else {
-            console.log(
-              `Recipient ${recipient} is offline, message will be delivered on next login`
-            );
           }
 
-          // Also send to the sender for multi-device support, but with own flag
-          message.own = true;
-          socket.emit("newMessage", { roomId, message });
+          // Send to sender with own flag
+          socket.emit("newMessage", {
+            roomId,
+            message: { ...message, own: true },
+          });
         }
       } catch (error) {
         console.error("Error sending message:", error);
