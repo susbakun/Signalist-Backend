@@ -24,20 +24,24 @@ const port = process.env.PORT || 3000;
 // Create HTTP server
 const server = http.createServer(app);
 
+// CORS configuration
+const corsOptions = {
+  origin: ["http://localhost:5173", "https://signalist.liara.run"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+};
+
 // Setup Socket.io with CORS configuration
 const io = new Server(server, {
-  cors: {
-    origin: "*", // In production, specify exact origins
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
+  cors: corsOptions,
 });
 
 // Initialize socket service
 socketService.initialize(io);
 
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
