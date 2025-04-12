@@ -506,13 +506,49 @@ exports.updateProfile = async (req, res) => {
       });
     }
 
-    // Update only allowed fields
+    // Handle email update - check if it's already in use
+    if (updates.email && updates.email !== user.email) {
+      const existingEmail = await findUserByEmail(updates.email);
+      if (existingEmail && existingEmail.username !== username) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already registered by another user",
+        });
+      }
+      user.email = updates.email;
+    }
+
+    // Handle username update - check if it's already in use
+    let needUsernameUpdate = false;
+    if (updates.username && updates.username !== user.username) {
+      const existingUser = await findUserByUsername(updates.username);
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          message: "Username already taken",
+        });
+      }
+      needUsernameUpdate = true;
+    }
+
+    // Update other allowed fields
     if (updates.name) user.name = updates.name;
-    if (updates.bio) user.bio = updates.bio;
+    if (updates.bio !== undefined) user.bio = updates.bio;
     if (updates.imageUrl) user.imageUrl = updates.imageUrl;
 
-    // Save updated user to Redis
-    await redisService.set(`user:${username}`, JSON.stringify(user));
+    // If username is changing, we need to update the key in Redis
+    if (needUsernameUpdate) {
+      // Delete the old user record
+      await redisService.del(`user:${username}`);
+
+      // Save with the new username
+      const newUsername = updates.username;
+      user.username = newUsername;
+      await redisService.set(`user:${newUsername}`, JSON.stringify(user));
+    } else {
+      // Just update the existing record
+      await redisService.set(`user:${username}`, JSON.stringify(user));
+    }
 
     // Return updated user
     const { password: _, ...safeUser } = user;
