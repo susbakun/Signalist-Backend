@@ -16,6 +16,13 @@ const initialize = (socketIo) => {
     // User authentication
     socket.on("authenticate", async (username) => {
       try {
+        if (!username) {
+          socket.emit("error", {
+            message: "Username is required for authentication",
+          });
+          return;
+        }
+
         // Store the socket ID with the username
         connectedUsers[username] = socket.id;
         socket.username = username;
@@ -41,21 +48,47 @@ const initialize = (socketIo) => {
       try {
         const { roomId, message, isGroup } = data;
 
+        if (!roomId || !message) {
+          socket.emit("error", { message: "Invalid message data" });
+          return;
+        }
+
+        console.log(
+          `Message received: ${JSON.stringify(message)} for room: ${roomId}, isGroup: ${isGroup}`
+        );
+
         // Store the message in Redis
         await saveMessage(roomId, message);
 
         if (isGroup) {
           // Send to all members of the group
+          console.log(`Broadcasting message to group room: ${roomId}`);
           io.to(roomId).emit("newMessage", { roomId, message });
         } else {
           // Get recipient from roomId (format: user1_user2)
           const users = roomId.split("_");
           const sender = socket.username;
+
+          if (!sender) {
+            socket.emit("error", { message: "Sender not authenticated" });
+            return;
+          }
+
           const recipient = users.find((user) => user !== sender);
 
+          console.log(`Sending message from ${sender} to ${recipient}`);
+
           // Send to the recipient (if they're online)
-          if (connectedUsers[recipient]) {
-            io.to(recipient).emit("newMessage", { roomId, message });
+          if (recipient && connectedUsers[recipient]) {
+            console.log(`Recipient ${recipient} is online, delivering message`);
+            io.to(connectedUsers[recipient]).emit("newMessage", {
+              roomId,
+              message,
+            });
+          } else {
+            console.log(
+              `Recipient ${recipient} is offline, message will be delivered on next login`
+            );
           }
 
           // Also send to the sender (for multi-device support)
@@ -69,19 +102,37 @@ const initialize = (socketIo) => {
 
     // Join a room (for group chats)
     socket.on("joinRoom", (roomId) => {
+      if (!roomId) return;
+
       socket.join(roomId);
       console.log(`${socket.username} joined room: ${roomId}`);
+
+      // Notify the room that a user has joined
+      socket.to(roomId).emit("userJoined", {
+        username: socket.username,
+        roomId,
+      });
     });
 
     // Leave a room
     socket.on("leaveRoom", (roomId) => {
+      if (!roomId) return;
+
       socket.leave(roomId);
       console.log(`${socket.username} left room: ${roomId}`);
+
+      // Notify the room that a user has left
+      socket.to(roomId).emit("userLeft", {
+        username: socket.username,
+        roomId,
+      });
     });
 
     // Handle typing indicators
     socket.on("typing", (data) => {
       const { roomId, isTyping } = data;
+
+      if (!roomId) return;
 
       // Notify other participants
       socket.to(roomId).emit("userTyping", {
@@ -101,6 +152,11 @@ const initialize = (socketIo) => {
         // Notify other users about offline status
         io.emit("onlineUsers", Object.keys(connectedUsers));
       }
+    });
+
+    // Handle errors
+    socket.on("error", (error) => {
+      console.error(`Socket error for ${socket.id}:`, error);
     });
   });
 };
@@ -160,6 +216,23 @@ const broadcast = (event, data) => {
 };
 
 /**
+ * Get a list of currently online users
+ * @returns {Array} Array of online usernames
+ */
+const getOnlineUsers = () => {
+  return Object.keys(connectedUsers);
+};
+
+/**
+ * Check if a user is online
+ * @param {string} username - The username to check
+ * @returns {boolean} True if the user is online
+ */
+const isUserOnline = (username) => {
+  return !!connectedUsers[username];
+};
+
+/**
  * Clean up connections when the server shuts down
  */
 const disconnect = async () => {
@@ -175,4 +248,6 @@ module.exports = {
   sendToUser,
   broadcast,
   disconnect,
+  getOnlineUsers,
+  isUserOnline,
 };
