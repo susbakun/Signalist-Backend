@@ -116,7 +116,7 @@ exports.getConversationMessages = async (req, res) => {
  */
 exports.sendMessage = async (req, res) => {
   const { roomId } = req.params;
-  const { sender, text, messageImageId } = req.body;
+  const { sender, text, messageImageHref } = req.body;
 
   try {
     // Create message object
@@ -126,8 +126,8 @@ exports.sendMessage = async (req, res) => {
       date: Date.now(),
     };
 
-    if (messageImageId) {
-      message.messageImageId = messageImageId;
+    if (messageImageHref) {
+      message.messageImageHref = messageImageHref;
     }
 
     // Get existing messages
@@ -142,27 +142,40 @@ exports.sendMessage = async (req, res) => {
     // Add new message
     messages.push(message);
 
-    // Save to Redis
-    await redisService.set(roomKey, JSON.stringify(messages));
+    // Save to Redis with long expiry to ensure persistence
+    await redisService.set(
+      roomKey,
+      JSON.stringify(messages),
+      60 * 60 * 24 * 30
+    ); // 30 days
 
     // Determine if this is a group chat or DM
     const isGroup = roomId.startsWith("group:") || roomId.split("_").length > 2;
 
-    // Use socket.io to notify recipients
-    if (isGroup) {
-      // For group chat, broadcast to room
-      socketService.broadcast(`newMessage:${roomId}`, { message, roomId });
-    } else {
-      // For DM, send to recipient
-      const users = roomId.split("_");
-      const recipient = users.find((user) => user !== sender.username);
+    // Use socket.io to notify recipients in real-time
+    if (socketService.io) {
+      if (isGroup) {
+        // For group chat, broadcast to room
+        socketService.io.to(roomId).emit("newMessage", { roomId, message });
+      } else {
+        // For DM, send to recipient
+        const users = roomId.split("_");
+        const recipient = users.find((user) => user !== sender.username);
 
-      if (recipient) {
-        socketService.sendToUser(recipient, {
-          type: "newMessage",
-          message,
-          roomId,
-        });
+        if (recipient && socketService.isUserOnline(recipient)) {
+          socketService.sendToUser(recipient, "newMessage", {
+            roomId,
+            message,
+          });
+        }
+
+        // Also emit to the sender for multi-device support
+        if (socketService.isUserOnline(sender.username)) {
+          socketService.sendToUser(sender.username, "newMessage", {
+            roomId,
+            message,
+          });
+        }
       }
     }
 

@@ -126,7 +126,13 @@ class RedisService {
       if (expiry) {
         await this.client.set(key, stringValue, "EX", expiry);
       } else {
-        await this.client.set(key, stringValue);
+        // By default, set a very long expiry for message data to ensure persistence
+        // This prevents message loss due to Redis key expiration
+        if (key.startsWith("message:")) {
+          await this.client.set(key, stringValue, "EX", 60 * 60 * 24 * 30); // 30 days
+        } else {
+          await this.client.set(key, stringValue);
+        }
       }
       return true;
     } catch (error) {

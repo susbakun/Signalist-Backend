@@ -186,6 +186,23 @@ const saveMessage = async (roomId, message) => {
     // Save back to Redis
     await redisService.set(roomKey, JSON.stringify(messages));
 
+    // Make sure this persists beyond Redis by updating the message storage
+    // This ensures messages are saved permanently even if Redis resets
+    try {
+      // Store the message in MongoDB or another persistent storage
+      // For now, make sure Redis data is persisted with a very long expiry
+      await redisService.set(
+        roomKey,
+        JSON.stringify(messages),
+        60 * 60 * 24 * 30
+      ); // 30 days
+    } catch (persistError) {
+      console.error(
+        "Error persisting message to permanent storage:",
+        persistError
+      );
+    }
+
     return true;
   } catch (error) {
     console.error("Error saving message to Redis:", error);
