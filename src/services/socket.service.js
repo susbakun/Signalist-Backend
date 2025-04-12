@@ -46,7 +46,7 @@ const initialize = (socketIo) => {
     // Handle sending messages
     socket.on("sendMessage", async (data) => {
       try {
-        const { roomId, message, isGroup } = data;
+        const { roomId, message, isGroup, fromAPI } = data;
 
         if (!roomId || !message) {
           socket.emit("error", { message: "Invalid message data" });
@@ -54,8 +54,17 @@ const initialize = (socketIo) => {
         }
 
         console.log(
-          `Message received: ${JSON.stringify(message)} for room: ${roomId}, isGroup: ${isGroup}`
+          `Message received via socket: ${JSON.stringify(message)} for room: ${roomId}, isGroup: ${isGroup}`
         );
+
+        // If the message is already coming from the API, don't save again and don't broadcast
+        // This prevents double processing when a message is sent via API
+        if (fromAPI) {
+          console.log(
+            "Message already processed by API, skipping socket processing"
+          );
+          return;
+        }
 
         // Store the message in Redis
         await saveMessage(roomId, message);

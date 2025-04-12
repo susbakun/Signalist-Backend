@@ -11,6 +11,12 @@ const postsRoutes = require("./routes/posts.routes");
 const messagesRoutes = require("./routes/messages.routes");
 const socketService = require("./services/socket.service");
 
+// Import controllers for upload handling
+const usersController = require("./controllers/users.controller");
+const signalsController = require("./controllers/signals.controller");
+const postsController = require("./controllers/posts.controller");
+const messagesController = require("./controllers/messages.controller");
+
 // Initialize Express app
 const app = express();
 const port = process.env.PORT || 3000;
@@ -51,24 +57,27 @@ app.use("/api/signals", signalsRoutes);
 app.use("/api/posts", postsRoutes);
 app.use("/api/messages", messagesRoutes);
 
-// Upload route
-app.post("/api/upload/:type", upload.single("file"), (req, res) => {
-  const { type } = req.params;
-
-  // Route the file upload to the appropriate controller based on 'type'
-  switch (type) {
-    case "signals":
-      return signalsRoutes.uploadImage(req, res);
-    case "posts":
-      return postsRoutes.uploadImage(req, res);
-    case "users":
-      return usersRoutes.uploadImage(req, res);
-    case "messages":
-      return messagesRoutes.uploadImage(req, res);
-    default:
-      return res.status(400).json({ message: "Invalid upload type" });
-  }
-});
+// Upload routes
+app.post(
+  "/api/upload/signals",
+  upload.single("file"),
+  signalsController.uploadImage
+);
+app.post(
+  "/api/upload/posts",
+  upload.single("file"),
+  postsController.uploadImage
+);
+app.post(
+  "/api/upload/users",
+  upload.single("file"),
+  usersController.uploadImage
+);
+app.post(
+  "/api/upload/messages",
+  upload.single("file"),
+  messagesController.uploadImage
+);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
