@@ -2,6 +2,8 @@ const redisService = require("./redis.service");
 
 let io;
 const connectedUsers = {};
+const messageQueue = {}; // Queue for batching messages to Redis
+let saveInterval = null; // Interval for batch saving
 
 /**
  * Initialize the Socket.io service
@@ -10,8 +12,17 @@ const connectedUsers = {};
 const initialize = (socketIo) => {
   io = socketIo;
 
+  // Set up batch saving interval (save messages every 5 seconds)
+  saveInterval = setInterval(processBatchSaves, 5000);
+
   io.on("connection", (socket) => {
     console.log(`Socket connected: ${socket.id}`);
+
+    // Heartbeat to keep connection alive
+    socket.on("heartbeat", (data) => {
+      // Just respond to confirm connection is alive
+      socket.emit("heartbeat_ack", { timestamp: Date.now() });
+    });
 
     // User authentication
     socket.on("authenticate", async (username) => {
@@ -43,6 +54,29 @@ const initialize = (socketIo) => {
       }
     });
 
+    // Sync messages that might have been missed
+    socket.on("syncMessages", async (data) => {
+      try {
+        const { roomId, since } = data;
+        if (!roomId) return;
+
+        // Get messages since the given timestamp
+        const roomKey = `message:${roomId}`;
+        const messagesJson = await redisService.get(roomKey);
+
+        if (messagesJson) {
+          const allMessages = JSON.parse(messagesJson);
+          const newMessages = allMessages.filter((msg) => msg.date > since);
+
+          if (newMessages.length > 0) {
+            socket.emit("syncedMessages", { roomId, messages: newMessages });
+          }
+        }
+      } catch (error) {
+        console.error("Error syncing messages:", error);
+      }
+    });
+
     // Handle sending messages
     socket.on("sendMessage", async (data) => {
       try {
@@ -54,7 +88,7 @@ const initialize = (socketIo) => {
         }
 
         console.log(
-          `Message received via socket: ${JSON.stringify(message)} for room: ${roomId}, isGroup: ${isGroup}`
+          `Message received via socket: ${message.text} for room: ${roomId}, isGroup: ${isGroup}`
         );
 
         // If the message is already coming from the API, don't save again and don't broadcast
@@ -66,8 +100,8 @@ const initialize = (socketIo) => {
           return;
         }
 
-        // Store the message in Redis
-        await saveMessage(roomId, message);
+        // Queue the message for batch saving
+        queueMessageForSave(roomId, message);
 
         if (isGroup) {
           // Send to all members of the group
@@ -106,6 +140,42 @@ const initialize = (socketIo) => {
       } catch (error) {
         console.error("Error sending message:", error);
         socket.emit("error", { message: "Failed to send message" });
+      }
+    });
+
+    // Handle updating messages (e.g., when image upload completes)
+    socket.on("updateMessage", async (data) => {
+      try {
+        const { roomId, messageId, updates } = data;
+
+        if (!roomId || !messageId || !updates) {
+          socket.emit("error", { message: "Invalid update data" });
+          return;
+        }
+
+        // Broadcast the update to all relevant users
+        if (roomId.startsWith("group:")) {
+          // It's a group chat
+          io.to(roomId).emit("messageUpdated", { roomId, messageId, updates });
+        } else {
+          // It's a DM
+          const users = roomId.split("_");
+          users.forEach((username) => {
+            if (connectedUsers[username]) {
+              io.to(connectedUsers[username]).emit("messageUpdated", {
+                roomId,
+                messageId,
+                updates,
+              });
+            }
+          });
+        }
+
+        // We'll update the message in Redis during the next batch save
+        updateQueuedMessage(roomId, messageId, updates);
+      } catch (error) {
+        console.error("Error updating message:", error);
+        socket.emit("error", { message: "Failed to update message" });
       }
     });
 
@@ -171,7 +241,122 @@ const initialize = (socketIo) => {
 };
 
 /**
- * Save a message to Redis
+ * Queue a message for batch saving to Redis
+ * @param {string} roomId - The room/conversation ID
+ * @param {object} message - The message object
+ */
+const queueMessageForSave = (roomId, message) => {
+  if (!messageQueue[roomId]) {
+    messageQueue[roomId] = [];
+  }
+
+  messageQueue[roomId].push({
+    ...message,
+    queued_at: Date.now(),
+  });
+};
+
+/**
+ * Update a message in the queue that hasn't been saved yet
+ * @param {string} roomId - The room ID
+ * @param {string} messageId - The message ID to update
+ * @param {object} updates - The updates to apply
+ */
+const updateQueuedMessage = (roomId, messageId, updates) => {
+  if (messageQueue[roomId]) {
+    // Find the message in the queue
+    const messageIndex = messageQueue[roomId].findIndex(
+      (m) => m.id === messageId
+    );
+    if (messageIndex >= 0) {
+      // Update the message
+      messageQueue[roomId][messageIndex] = {
+        ...messageQueue[roomId][messageIndex],
+        ...updates,
+        updated_at: Date.now(),
+      };
+    } else {
+      // Message already saved to Redis, need to update it there
+      updateSavedMessage(roomId, messageId, updates);
+    }
+  } else {
+    // Message already saved to Redis, need to update it there
+    updateSavedMessage(roomId, messageId, updates);
+  }
+};
+
+/**
+ * Update a message already saved in Redis
+ * @param {string} roomId - The room ID
+ * @param {string} messageId - The message ID
+ * @param {object} updates - The updates to apply
+ */
+const updateSavedMessage = async (roomId, messageId, updates) => {
+  try {
+    const roomKey = `message:${roomId}`;
+    const messagesJson = await redisService.get(roomKey);
+
+    if (messagesJson) {
+      const messages = JSON.parse(messagesJson);
+      const messageIndex = messages.findIndex((m) => m.id === messageId);
+
+      if (messageIndex >= 0) {
+        messages[messageIndex] = {
+          ...messages[messageIndex],
+          ...updates,
+          updated_at: Date.now(),
+        };
+
+        // Save back to Redis
+        await redisService.set(roomKey, JSON.stringify(messages));
+      }
+    }
+  } catch (error) {
+    console.error("Error updating saved message:", error);
+  }
+};
+
+/**
+ * Process all queued messages and save them to Redis
+ */
+const processBatchSaves = async () => {
+  // Exit if no messages to save
+  if (Object.keys(messageQueue).length === 0) return;
+
+  try {
+    // For each room with queued messages
+    for (const roomId of Object.keys(messageQueue)) {
+      if (messageQueue[roomId].length === 0) continue;
+
+      // Get current messages from Redis
+      const roomKey = `message:${roomId}`;
+      const existingMessagesJson = await redisService.get(roomKey);
+
+      let messages = [];
+      if (existingMessagesJson) {
+        messages = JSON.parse(existingMessagesJson);
+      }
+
+      // Add all queued messages
+      messages.push(...messageQueue[roomId]);
+
+      // Save to Redis with a long expiry
+      await redisService.set(
+        roomKey,
+        JSON.stringify(messages),
+        60 * 60 * 24 * 30 // 30 days
+      );
+
+      // Clear the queue for this room
+      messageQueue[roomId] = [];
+    }
+  } catch (error) {
+    console.error("Error processing batch saves:", error);
+  }
+};
+
+/**
+ * Save a message to Redis (legacy method, use queueMessageForSave instead)
  * @param {string} roomId - The room/conversation ID
  * @param {object} message - The message object
  */
@@ -193,24 +378,11 @@ const saveMessage = async (roomId, message) => {
     });
 
     // Save back to Redis
-    await redisService.set(roomKey, JSON.stringify(messages));
-
-    // Make sure this persists beyond Redis by updating the message storage
-    // This ensures messages are saved permanently even if Redis resets
-    try {
-      // Store the message in MongoDB or another persistent storage
-      // For now, make sure Redis data is persisted with a very long expiry
-      await redisService.set(
-        roomKey,
-        JSON.stringify(messages),
-        60 * 60 * 24 * 30
-      ); // 30 days
-    } catch (persistError) {
-      console.error(
-        "Error persisting message to permanent storage:",
-        persistError
-      );
-    }
+    await redisService.set(
+      roomKey,
+      JSON.stringify(messages),
+      60 * 60 * 24 * 30
+    ); // 30 days
 
     return true;
   } catch (error) {
@@ -222,11 +394,12 @@ const saveMessage = async (roomId, message) => {
 /**
  * Send a message to a specific user
  * @param {string} username - The recipient's username
+ * @param {string} event - The event name
  * @param {object} data - The data to send
  */
-const sendToUser = (username, data) => {
+const sendToUser = (username, event, data) => {
   if (connectedUsers[username]) {
-    io.to(connectedUsers[username]).emit("message", data);
+    io.to(connectedUsers[username]).emit(event, data);
     return true;
   }
   return false;
@@ -263,17 +436,30 @@ const isUserOnline = (username) => {
  */
 const disconnect = async () => {
   if (io) {
-    io.disconnectSockets();
+    // Process any remaining messages in the queue
+    await processBatchSaves();
+
+    // Clear the save interval
+    if (saveInterval) {
+      clearInterval(saveInterval);
+      saveInterval = null;
+    }
+
+    // Close all connections
+    const sockets = await io.fetchSockets();
+    sockets.forEach((socket) => {
+      socket.disconnect(true);
+    });
+
     console.log("All socket connections closed");
   }
-  return Promise.resolve();
 };
 
 module.exports = {
   initialize,
   sendToUser,
   broadcast,
-  disconnect,
   getOnlineUsers,
   isUserOnline,
+  disconnect,
 };

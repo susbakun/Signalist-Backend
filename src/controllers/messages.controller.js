@@ -13,6 +13,10 @@ const s3Client = new S3Client({
   },
 });
 
+// Create an in-memory message cache to avoid frequent Redis reads
+const messageCache = new Map();
+const MESSAGE_CACHE_TTL = 60 * 1000; // 60 seconds in milliseconds
+
 /**
  * Get all conversations for a user
  */
@@ -32,8 +36,20 @@ exports.getUserConversations = async (req, res) => {
     // Process each conversation
     for (const key of conversationKeys) {
       const roomId = key.replace("message:", "");
-      const messagesJson = await redisService.get(key);
 
+      // Check if we have a fresh cache entry
+      const cacheKey = `${roomId}:${username}`;
+      const cachedData = messageCache.get(cacheKey);
+      const now = Date.now();
+
+      if (cachedData && now - cachedData.timestamp < MESSAGE_CACHE_TTL) {
+        // Use cached data if available and fresh
+        conversations[roomId] = cachedData.data;
+        continue;
+      }
+
+      // Otherwise fetch from Redis
+      const messagesJson = await redisService.get(key);
       if (!messagesJson) continue;
 
       const messages = JSON.parse(messagesJson);
@@ -59,6 +75,12 @@ exports.getUserConversations = async (req, res) => {
           },
           usersInfo: groupInfo.members,
         };
+
+        // Update cache
+        messageCache.set(cacheKey, {
+          data: conversations[roomId],
+          timestamp: now,
+        });
       } else {
         // Direct message logic
         const otherUser = users.find((u) => u !== username);
@@ -80,6 +102,12 @@ exports.getUserConversations = async (req, res) => {
           groupInfo: null,
           usersInfo: null,
         };
+
+        // Update cache
+        messageCache.set(cacheKey, {
+          data: conversations[roomId],
+          timestamp: now,
+        });
       }
     }
 
@@ -119,8 +147,10 @@ exports.sendMessage = async (req, res) => {
   const { sender, text, messageImageHref } = req.body;
 
   try {
-    // Create message object
+    // Create message object with unique id
+    const messageId = uuidv4();
     const message = {
+      id: messageId,
       sender,
       text,
       date: Date.now(),
@@ -132,22 +162,39 @@ exports.sendMessage = async (req, res) => {
 
     // Get existing messages
     const roomKey = `message:${roomId}`;
-    const existingMessagesJson = await redisService.get(roomKey);
 
-    let messages = [];
-    if (existingMessagesJson) {
-      messages = JSON.parse(existingMessagesJson);
-    }
+    // Add message directly to Redis without waiting for result
+    // (faster response to client, async processing)
+    const updatePromise = (async () => {
+      try {
+        const existingMessagesJson = await redisService.get(roomKey);
+        let messages = [];
+        if (existingMessagesJson) {
+          messages = JSON.parse(existingMessagesJson);
+        }
 
-    // Add new message
-    messages.push(message);
+        // Add new message
+        messages.push(message);
 
-    // Save to Redis with long expiry to ensure persistence
-    await redisService.set(
-      roomKey,
-      JSON.stringify(messages),
-      60 * 60 * 24 * 30
-    ); // 30 days
+        // Save to Redis with long expiry to ensure persistence
+        await redisService.set(
+          roomKey,
+          JSON.stringify(messages),
+          60 * 60 * 24 * 30
+        ); // 30 days
+
+        // Clear cache for this room
+        const users = roomId.startsWith("group:")
+          ? extractUsersFromGroup(roomId)
+          : roomId.split("_");
+
+        users.forEach((username) => {
+          messageCache.delete(`${roomId}:${username}`);
+        });
+      } catch (e) {
+        console.error("Error in async message update:", e);
+      }
+    })();
 
     // Determine if this is a group chat or DM
     const isGroup = roomId.startsWith("group:") || roomId.split("_").length > 2;
@@ -179,6 +226,7 @@ exports.sendMessage = async (req, res) => {
       }
     }
 
+    // Respond immediately without waiting for Redis update
     res.status(201).json({ message });
   } catch (error) {
     console.error("Error sending message:", error);
@@ -301,3 +349,32 @@ exports.uploadImage = async (req, res) => {
     res.status(500).json({ message: "Error uploading message image" });
   }
 };
+
+/**
+ * Extract usernames from a group chat
+ */
+function extractUsersFromGroup(roomId) {
+  try {
+    const groupInfoJson = redisService.get(`group:${roomId}`);
+    if (!groupInfoJson) return [];
+
+    const groupInfo = JSON.parse(groupInfoJson);
+    return groupInfo.members.map((member) => member.username);
+  } catch (error) {
+    console.error("Error extracting users from group:", error);
+    return [];
+  }
+}
+
+// Clear the message cache periodically (every 5 minutes)
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [key, data] of messageCache.entries()) {
+      if (now - data.timestamp > MESSAGE_CACHE_TTL) {
+        messageCache.delete(key);
+      }
+    }
+  },
+  5 * 60 * 1000
+);
