@@ -27,7 +27,7 @@ const server = http.createServer(app);
 // Get allowed origins from environment or use default
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",")
-  : ["https://signalisttech.com", "http://localhost:3000"];
+  : ["https://signalisttech.com", "http://localhost:5173"];
 
 // Setup Socket.io with CORS configuration
 const io = new Server(server, {
