@@ -149,11 +149,12 @@ exports.sendMessage = async (req, res) => {
   try {
     // Create message object with unique id
     const messageId = uuidv4();
+    const now = Date.now();
     const message = {
       id: messageId,
       sender,
       text,
-      date: Date.now(),
+      date: now,
     };
 
     if (messageImageHref) {
@@ -171,6 +172,23 @@ exports.sendMessage = async (req, res) => {
         let messages = [];
         if (existingMessagesJson) {
           messages = JSON.parse(existingMessagesJson);
+        }
+
+        // Check for duplicate messages (within last 10 seconds with same text)
+        // This helps prevent duplicate messages during reconnection scenarios
+        const isDuplicate = messages.some((msg) => {
+          return (
+            msg.sender.username === sender.username &&
+            msg.text === text &&
+            now - msg.date < 10000 // Within last 10 seconds
+          );
+        });
+
+        if (isDuplicate) {
+          console.log(
+            `Skipping duplicate API message from ${sender.username}: ${text}`
+          );
+          return; // Don't save this message if it's a duplicate
         }
 
         // Add new message

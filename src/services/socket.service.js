@@ -57,7 +57,7 @@ const initialize = (socketIo) => {
     // Sync messages that might have been missed
     socket.on("syncMessages", async (data) => {
       try {
-        const { roomId, since } = data;
+        const { roomId, since, existingIds = [] } = data;
         if (!roomId) return;
 
         // Get messages since the given timestamp
@@ -67,19 +67,56 @@ const initialize = (socketIo) => {
         if (messagesJson) {
           const allMessages = JSON.parse(messagesJson);
 
-          // Ensure each message has a unique ID
+          // Create a Set of existing IDs for faster lookups
+          const existingIdsSet = new Set(existingIds);
+
+          // Ensure each message has a unique ID and filter out messages
+          // that the client already has (based on existingIds)
           const messagesToSend = allMessages
-            .filter((msg) => msg.date > since)
-            .map((msg) => {
-              // Make sure each message has an ID for proper tracking
+            .filter((msg) => {
+              // Only include messages newer than the since timestamp
+              if (msg.date <= since) {
+                return false;
+              }
+
+              // Generate ID if not present
               if (!msg.id && msg.date && msg.sender && msg.text) {
                 msg.id = `${msg.date}-${msg.sender.username}-${msg.text.substring(0, 10)}`;
+              }
+
+              // Skip messages that the client already has
+              if (msg.id && existingIdsSet.has(msg.id)) {
+                console.log(
+                  `Skipping already existing message in sync: ${msg.id}`
+                );
+                return false;
+              }
+
+              // Also skip messages sent by this user to avoid duplicates
+              if (msg.sender && msg.sender.username === socket.username) {
+                console.log(
+                  `Skipping own message in sync: ${msg.id || "unknown"}`
+                );
+                return false;
+              }
+
+              return true;
+            })
+            .map((msg) => {
+              // Ensure proper flag for own messages
+              if (msg.sender && msg.sender.username === socket.username) {
+                msg.own = true;
               }
               return msg;
             });
 
           if (messagesToSend.length > 0) {
+            console.log(
+              `Sending ${messagesToSend.length} missed messages to ${socket.username}`
+            );
             socket.emit("syncedMessages", { roomId, messages: messagesToSend });
+          } else {
+            console.log(`No new messages to sync for ${socket.username}`);
           }
         }
       } catch (error) {
