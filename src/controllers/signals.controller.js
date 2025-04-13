@@ -308,11 +308,16 @@ exports.updateSignal = async (req, res) => {
       return res.status(404).json({ message: "Signal not found" });
     }
 
-    const { description, closeTime } = req.body;
+    const { description, closeTime, status } = req.body;
 
     // Update the signal properties
     signal.description = description;
     signal.closeTime = closeTime;
+
+    // Update status if provided
+    if (status) {
+      signal.status = status;
+    }
 
     await redisService.set(`signal:${signal.id}`, JSON.stringify(signal));
     res.json({ data: signal });
