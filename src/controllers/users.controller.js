@@ -520,6 +520,7 @@ exports.updateProfile = async (req, res) => {
 
     // Handle username update - check if it's already in use
     let needUsernameUpdate = false;
+    const oldUsername = username; // Store old username for reference updates
     if (updates.username && updates.username !== user.username) {
       const existingUser = await findUserByUsername(updates.username);
       if (existingUser) {
@@ -529,6 +530,7 @@ exports.updateProfile = async (req, res) => {
         });
       }
       needUsernameUpdate = true;
+      user.username = updates.username;
     }
 
     // Update other allowed fields
@@ -539,15 +541,38 @@ exports.updateProfile = async (req, res) => {
     // If username is changing, we need to update the key in Redis
     if (needUsernameUpdate) {
       // Delete the old user record
-      await redisService.del(`user:${username}`);
+      await redisService.del(`user:${oldUsername}`);
 
       // Save with the new username
-      const newUsername = updates.username;
-      user.username = newUsername;
-      await redisService.set(`user:${newUsername}`, JSON.stringify(user));
+      await redisService.set(`user:${user.username}`, JSON.stringify(user));
     } else {
       // Just update the existing record
       await redisService.set(`user:${username}`, JSON.stringify(user));
+    }
+
+    // Create simplified user data for updating references
+    const simplifiedUserData = {
+      username: user.username,
+      name: user.name,
+      imageUrl: user.imageUrl || "",
+    };
+
+    // Update user references in other collections
+    try {
+      // 1. Update posts and comments
+      await updateUserInPosts(oldUsername, simplifiedUserData);
+
+      // 2. Update signals
+      await updateUserInSignals(oldUsername, {
+        ...simplifiedUserData,
+        score: user.score || 0,
+      });
+
+      // 3. Update messages
+      await updateUserInMessages(oldUsername, simplifiedUserData);
+    } catch (syncError) {
+      console.error("Error syncing user data:", syncError);
+      // Continue execution even if synchronization fails
     }
 
     // Return updated user
@@ -561,6 +586,144 @@ exports.updateProfile = async (req, res) => {
     });
   }
 };
+
+// Helper function to update user references in posts and comments
+async function updateUserInPosts(username, userData) {
+  try {
+    // Get all posts
+    const postKeys = await redisService.keys("post:*");
+
+    for (const key of postKeys) {
+      const postData = await redisService.get(key);
+      if (!postData) continue;
+
+      let post = JSON.parse(postData);
+      let modified = false;
+
+      // Update post publisher
+      if (post.publisher && post.publisher.username === username) {
+        post.publisher = {
+          ...post.publisher,
+          username: userData.username,
+          name: userData.name,
+          imageUrl: userData.imageUrl,
+        };
+        modified = true;
+      }
+
+      // Update comment publishers
+      if (post.comments && post.comments.length > 0) {
+        let commentsModified = false;
+
+        post.comments = post.comments.map((comment) => {
+          if (comment.publisher && comment.publisher.username === username) {
+            commentsModified = true;
+            return {
+              ...comment,
+              publisher: {
+                ...comment.publisher,
+                username: userData.username,
+                name: userData.name,
+                imageUrl: userData.imageUrl,
+              },
+            };
+          }
+          return comment;
+        });
+
+        if (commentsModified) {
+          modified = true;
+        }
+      }
+
+      // Save updated post if modified
+      if (modified) {
+        await redisService.set(key, JSON.stringify(post));
+      }
+    }
+  } catch (error) {
+    console.error("Error updating user in posts:", error);
+    throw error;
+  }
+}
+
+// Helper function to update user references in signals
+async function updateUserInSignals(username, userData) {
+  try {
+    // Get all signals
+    const signalKeys = await redisService.keys("signal:*");
+
+    for (const key of signalKeys) {
+      const signalData = await redisService.get(key);
+      if (!signalData) continue;
+
+      let signal = JSON.parse(signalData);
+      let modified = false;
+
+      // Update signal publisher
+      if (signal.publisher && signal.publisher.username === username) {
+        signal.publisher = {
+          ...signal.publisher,
+          username: userData.username,
+          name: userData.name,
+          imageUrl: userData.imageUrl,
+          // Keep the original score from the userData
+          score: userData.score,
+        };
+        modified = true;
+      }
+
+      // Save updated signal if modified
+      if (modified) {
+        await redisService.set(key, JSON.stringify(signal));
+      }
+    }
+  } catch (error) {
+    console.error("Error updating user in signals:", error);
+    throw error;
+  }
+}
+
+// Helper function to update user references in messages
+async function updateUserInMessages(username, userData) {
+  try {
+    // Get all message conversations that might involve this user
+    const messageKeys = await redisService.keys(`message:*${username}*`);
+
+    for (const key of messageKeys) {
+      const messagesData = await redisService.get(key);
+      if (!messagesData) continue;
+
+      let messages = JSON.parse(messagesData);
+      let modified = false;
+
+      // Update sender in messages
+      messages = messages.map((message) => {
+        if (message.sender && message.sender.username === username) {
+          modified = true;
+          return {
+            ...message,
+            sender: {
+              ...message.sender,
+              username: userData.username,
+              name: userData.name,
+              imageUrl: userData.imageUrl,
+            },
+          };
+        }
+        return message;
+      });
+
+      // Save updated messages if modified
+      if (modified) {
+        await redisService.set(key, JSON.stringify(messages));
+      }
+    }
+  } catch (error) {
+    console.error("Error updating user in messages:", error);
+    throw error;
+  }
+}
 
 // Upload image to Liara Object Storage
 exports.uploadImage = async (req, res) => {
