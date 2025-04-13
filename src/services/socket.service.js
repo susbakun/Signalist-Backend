@@ -12,8 +12,8 @@ let saveInterval = null; // Interval for batch saving
 const initialize = (socketIo) => {
   io = socketIo;
 
-  // Set up batch saving interval (save messages every 5 seconds)
-  saveInterval = setInterval(processBatchSaves, 5000);
+  // Set up batch saving interval (reduce from 5 seconds to 2 seconds for faster persistence)
+  saveInterval = setInterval(processBatchSaves, 2000);
 
   io.on("connection", (socket) => {
     console.log(`Socket connected: ${socket.id}`);
@@ -188,6 +188,10 @@ const initialize = (socketIo) => {
         // Queue the message for batch saving
         queueMessageForSave(roomId, message);
 
+        // IMPROVEMENT: Save immediately to Redis as well, don't just queue
+        // This ensures faster persistence and reduces the chance of message loss
+        saveMessageImmediately(roomId, message);
+
         if (isGroup) {
           // Send to all members of the group except the sender
           socket.to(roomId).emit("newMessage", { roomId, message });
@@ -250,8 +254,10 @@ const initialize = (socketIo) => {
           });
         }
 
-        // We'll update the message in Redis during the next batch save
+        // Update in the queue and in Redis immediately
         updateQueuedMessage(roomId, messageId, updates);
+        // IMPROVEMENT: Also update in Redis immediately
+        await updateSavedMessage(roomId, messageId, updates);
       } catch (error) {
         console.error("Error updating message:", error);
         socket.emit("error", { message: "Failed to update message" });
@@ -306,6 +312,9 @@ const initialize = (socketIo) => {
 
       if (socket.username) {
         delete connectedUsers[socket.username];
+
+        // IMPROVEMENT: Process any pending messages for this user
+        processBatchSaves();
 
         // Notify other users about offline status
         io.emit("onlineUsers", Object.keys(connectedUsers));
@@ -431,6 +440,7 @@ const processBatchSaves = async () => {
       });
 
       // Add only queued messages that don't already exist
+      let newMessages = false;
       for (const queuedMessage of messageQueue[roomId]) {
         // Ensure each message has an ID
         if (!queuedMessage.id && queuedMessage.date && queuedMessage.sender) {
@@ -450,14 +460,34 @@ const processBatchSaves = async () => {
         if (queuedMessage.id) {
           existingMessageIds.set(queuedMessage.id, true);
         }
+        newMessages = true;
       }
 
       // Save to Redis with a long expiry
       await redisService.set(
         roomKey,
         JSON.stringify(messages),
+        "EX",
         60 * 60 * 24 * 30 // 30 days
       );
+
+      // IMPROVEMENT: Notify all users in the room that messages have been persisted
+      if (newMessages) {
+        // For group chats
+        if (roomId.startsWith("group:")) {
+          io.to(roomId).emit("messagesPersisted", { roomId });
+        } else {
+          // For DMs
+          const users = roomId.split("_");
+          users.forEach((username) => {
+            if (connectedUsers[username]) {
+              io.to(connectedUsers[username]).emit("messagesPersisted", {
+                roomId,
+              });
+            }
+          });
+        }
+      }
 
       // Clear the queue for this room
       messageQueue[roomId] = [];
@@ -564,6 +594,41 @@ const disconnect = async () => {
     });
 
     console.log("All socket connections closed");
+  }
+};
+
+// ADDED: New immediate save function to ensure messages are persisted quickly
+const saveMessageImmediately = async (roomId, message) => {
+  try {
+    const roomKey = `message:${roomId}`;
+    const existingMessagesJson = await redisService.get(roomKey);
+
+    let messages = [];
+    if (existingMessagesJson) {
+      messages = JSON.parse(existingMessagesJson);
+    }
+
+    // Check if the message already exists by ID
+    const existingIndex = messages.findIndex((msg) => msg.id === message.id);
+    if (existingIndex >= 0) {
+      return; // Already exists, don't add again
+    }
+
+    // Add the message
+    messages.push({
+      ...message,
+      saved_at: Date.now(),
+    });
+
+    // Save to Redis
+    await redisService.set(
+      roomKey,
+      JSON.stringify(messages),
+      "EX",
+      60 * 60 * 24 * 30 // 30 days
+    );
+  } catch (error) {
+    console.error("Error in immediate message save:", error);
   }
 };
 
