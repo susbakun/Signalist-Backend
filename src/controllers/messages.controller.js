@@ -144,11 +144,11 @@ exports.getConversationMessages = async (req, res) => {
  */
 exports.sendMessage = async (req, res) => {
   const { roomId } = req.params;
-  const { sender, text, messageImageHref } = req.body;
+  const { sender, text, messageImageHref, id } = req.body;
 
   try {
     // Create message object with unique id
-    const messageId = uuidv4();
+    const messageId = id || uuidv4();
     const now = Date.now();
     const message = {
       id: messageId,
@@ -174,13 +174,22 @@ exports.sendMessage = async (req, res) => {
           messages = JSON.parse(existingMessagesJson);
         }
 
-        // Check for duplicate messages (within last 10 seconds with same text)
+        // First check for exact message ID match
+        if (id) {
+          const isDuplicateById = messages.some((msg) => msg.id === id);
+          if (isDuplicateById) {
+            console.log(`Skipping duplicate message with ID: ${id}`);
+            return; // Don't save this message if it's a duplicate by ID
+          }
+        }
+
+        // Then check for content-based duplicates (within last 30 seconds with same text)
         // This helps prevent duplicate messages during reconnection scenarios
         const isDuplicate = messages.some((msg) => {
           return (
             msg.sender.username === sender.username &&
             msg.text === text &&
-            now - msg.date < 30000 // Increase from 10s to 30s to catch more duplicates
+            now - msg.date < 30000 // 30 seconds window to catch duplicates
           );
         });
 
@@ -198,59 +207,24 @@ exports.sendMessage = async (req, res) => {
         await redisService.set(
           roomKey,
           JSON.stringify(messages),
-          60 * 60 * 24 * 30
-        ); // 30 days
+          "EX",
+          60 * 60 * 24 * 30 // 30 days
+        );
 
-        // Clear cache for this room
-        const users = roomId.startsWith("group:")
-          ? extractUsersFromGroup(roomId)
-          : roomId.split("_");
-
-        users.forEach((username) => {
-          messageCache.delete(`${roomId}:${username}`);
-        });
-      } catch (e) {
-        console.error("Error in async message update:", e);
+        // Don't emit socket events here as the client will handle real-time updates
+        // This avoids duplicate messages when the client uses both API and socket
+      } catch (error) {
+        console.error("Error adding message to Redis:", error);
       }
     })();
 
-    // Determine if this is a group chat or DM
-    const isGroup = roomId.startsWith("group:") || roomId.split("_").length > 2;
-
-    // Use socket.io to notify recipients in real-time
-    if (socketService.io) {
-      // Mark the message as coming from the API to prevent duplicate processing
-      message.fromAPI = true;
-
-      if (isGroup) {
-        // For group chat, broadcast to everyone EXCEPT the sender
-        // The sender already has the message in their UI
-        const roomClients =
-          socketService.io.sockets.adapter.rooms.get(roomId) || new Set();
-        for (const clientId of roomClients) {
-          const clientSocket = socketService.io.sockets.sockets.get(clientId);
-          if (clientSocket && clientSocket.username !== sender.username) {
-            clientSocket.emit("newMessage", { roomId, message });
-          }
-        }
-      } else {
-        // For DM, send only to recipient, not back to sender
-        const users = roomId.split("_");
-        const recipient = users.find((user) => user !== sender.username);
-
-        if (recipient && socketService.isUserOnline(recipient)) {
-          socketService.sendToUser(recipient, "newMessage", {
-            roomId,
-            message,
-          });
-        }
-
-        // Don't emit back to the sender - they already have the message
-      }
-    }
-
-    // Respond immediately without waiting for Redis update
-    res.status(201).json({ message });
+    // Respond to the client immediately without waiting for Redis
+    res.status(201).json({
+      message: {
+        ...message,
+        id: messageId, // Make sure the ID is sent back
+      },
+    });
   } catch (error) {
     console.error("Error sending message:", error);
     res.status(500).json({ message: "Failed to send message" });

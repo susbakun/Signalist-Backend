@@ -135,7 +135,7 @@ const initialize = (socketIo) => {
         }
 
         console.log(
-          `Message received via socket: ${message.text} for room: ${roomId}, isGroup: ${isGroup}`
+          `Message received via socket: ${message.text} for room: ${roomId}, isGroup: ${isGroup}, fromAPI: ${fromAPI}`
         );
 
         // If the message is already coming from the API, don't save again and don't broadcast
@@ -159,12 +159,24 @@ const initialize = (socketIo) => {
         const existingMessagesJson = await redisService.get(roomKey);
         if (existingMessagesJson) {
           const existingMessages = JSON.parse(existingMessagesJson);
+
+          // Check for exact ID match first
+          const isDuplicateById = existingMessages.some(
+            (msg) => msg.id === message.id
+          );
+          if (isDuplicateById) {
+            console.log(
+              `Skipping duplicate message with ID ${message.id} in room ${roomId}`
+            );
+            return;
+          }
+
+          // Then check for content-based duplicates
           const isDuplicate = existingMessages.some(
             (msg) =>
-              msg.id === message.id ||
-              (msg.sender.username === message.sender.username &&
-                msg.text === message.text &&
-                Math.abs(msg.date - message.date) < 30000) // Within 30 seconds
+              msg.sender.username === message.sender.username &&
+              msg.text === message.text &&
+              Math.abs(msg.date - message.date) < 30000 // Within 30 seconds
           );
 
           if (isDuplicate) {
