@@ -22,6 +22,9 @@ router.post("/:id/like", signalsController.likeSignal);
 // Dislike a signal
 router.post("/:id/dislike", signalsController.dislikeSignal);
 
+// Edit a signal
+router.put("/:id", signalsController.updateSignal);
+
 // Delete a signal
 router.delete("/:id", signalsController.deleteSignal);
 

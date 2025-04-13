@@ -300,6 +300,28 @@ exports.dislikeSignal = async (req, res) => {
   }
 };
 
+// Update a signal (edit description and closeTime)
+exports.updateSignal = async (req, res) => {
+  try {
+    const signal = await getSignalFromRedis(req.params.id);
+    if (!signal) {
+      return res.status(404).json({ message: "Signal not found" });
+    }
+
+    const { description, closeTime } = req.body;
+
+    // Update the signal properties
+    signal.description = description;
+    signal.closeTime = closeTime;
+
+    await redisService.set(`signal:${signal.id}`, JSON.stringify(signal));
+    res.json({ data: signal });
+  } catch (error) {
+    console.error("Error updating signal:", error);
+    res.status(500).json({ message: "Error updating signal" });
+  }
+};
+
 // Delete a signal
 exports.deleteSignal = async (req, res) => {
   try {
