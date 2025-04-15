@@ -171,12 +171,12 @@ const initialize = (socketIo) => {
             return;
           }
 
-          // Then check for content-based duplicates
+          // Then check for content-based duplicates with a stricter time window
           const isDuplicate = existingMessages.some(
             (msg) =>
               msg.sender.username === message.sender.username &&
               msg.text === message.text &&
-              Math.abs(msg.date - message.date) < 30000 // Within 30 seconds
+              Math.abs(msg.date - message.date) < 10000 // Reduce to 10 seconds window
           );
 
           if (isDuplicate) {
@@ -185,19 +185,16 @@ const initialize = (socketIo) => {
           }
         }
 
-        // Queue the message for batch saving
-        queueMessageForSave(roomId, message);
+        // Save message immediately to Redis
+        await saveMessageImmediately(roomId, message);
 
-        // IMPROVEMENT: Save immediately to Redis as well, don't just queue
-        // This ensures faster persistence and reduces the chance of message loss
-        saveMessageImmediately(roomId, message);
+        // Don't queue for batch save since we're saving immediately
+        // This prevents potential duplicate processing
+        // queueMessageForSave(roomId, message);
 
         if (isGroup) {
           // Send to all members of the group except the sender
           socket.to(roomId).emit("newMessage", { roomId, message });
-
-          // Don't emit back to the sender - frontend already has this message
-          // The frontend logic will handle showing the message
         } else {
           // Get recipient from roomId (format: user1_user2)
           const users = roomId.split("_");
@@ -217,9 +214,10 @@ const initialize = (socketIo) => {
               message,
             });
           }
-
-          // Don't emit back to the sender - frontend already has this message
         }
+
+        // Notify about successful persistence
+        socket.emit("messagesPersisted", { roomId });
       } catch (error) {
         console.error("Error sending message:", error);
         socket.emit("error", { message: "Failed to send message" });
