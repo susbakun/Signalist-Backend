@@ -23,6 +23,9 @@ router.post("/:followerUsername/unfollow", usersController.unfollowUser);
 // Block user
 router.post("/:blockerUsername/block", usersController.blockUser);
 
+// Unblock user
+router.post("/:blockerUsername/unblock", usersController.unblockUser);
+
 // Update bookmarks
 router.put("/:username/bookmarks", usersController.updateBookmarks);
 

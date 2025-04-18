@@ -440,6 +440,62 @@ exports.blockUser = async (req, res) => {
   }
 };
 
+// Unblock user
+exports.unblockUser = async (req, res) => {
+  const { blockerUsername } = req.params;
+  const { blockedUsername } = req.body;
+
+  // Validation
+  if (!blockerUsername || !blockedUsername) {
+    return res.status(400).json({
+      success: false,
+      message: "Blocker and blocked usernames are required",
+    });
+  }
+
+  try {
+    // Find blocker user
+    const blocker = await findUserByUsername(blockerUsername);
+
+    if (!blocker) {
+      return res.status(404).json({
+        success: false,
+        message: "Blocker user not found",
+      });
+    }
+
+    // Check if user is actually blocked
+    const isBlocked = blocker.blockedAccounts.some(
+      (user) => user.username === blockedUsername
+    );
+
+    if (!isBlocked) {
+      return res.status(400).json({
+        success: false,
+        message: "User is not blocked",
+      });
+    }
+
+    // Remove from blocked accounts
+    blocker.blockedAccounts = blocker.blockedAccounts.filter(
+      (user) => user.username !== blockedUsername
+    );
+
+    // Save updated user to Redis
+    await redisService.set(`user:${blockerUsername}`, JSON.stringify(blocker));
+
+    // Return updated user
+    const { password: _, ...safeUser } = blocker;
+    res.json(safeUser);
+  } catch (error) {
+    console.error("Error unblocking user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error unblocking user",
+    });
+  }
+};
+
 // Update bookmarks
 exports.updateBookmarks = async (req, res) => {
   const { username } = req.params;
