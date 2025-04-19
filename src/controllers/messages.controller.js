@@ -142,12 +142,14 @@ exports.getConversationMessages = async (req, res) => {
 /**
  * Send a message
  */
+// In src/controllers/messages.controller.js, update the sendMessage function:
+
 exports.sendMessage = async (req, res) => {
   const { roomId } = req.params;
   const { sender, text, messageImageHref, id } = req.body;
 
   try {
-    // Create message object with unique id
+    // Use provided ID or generate one
     const messageId = id || uuidv4();
     const now = Date.now();
     const message = {
@@ -163,86 +165,82 @@ exports.sendMessage = async (req, res) => {
 
     // Get existing messages
     const roomKey = `message:${roomId}`;
+    const existingMessagesJson = await redisService.get(roomKey);
+    let messages = [];
 
-    // Add message directly to Redis without waiting for result
-    // (faster response to client, async processing)
-    const updatePromise = (async () => {
-      try {
-        const existingMessagesJson = await redisService.get(roomKey);
-        let messages = [];
-        if (existingMessagesJson) {
-          messages = JSON.parse(existingMessagesJson);
-        }
+    if (existingMessagesJson) {
+      messages = JSON.parse(existingMessagesJson);
+    }
 
-        // First check for exact message ID match
-        if (id) {
-          const isDuplicateById = messages.some((msg) => msg.id === id);
-          if (isDuplicateById) {
-            console.log(`API: Skipping duplicate message with ID: ${id}`);
-            return; // Don't save this message if it's a duplicate by ID
-          }
-        }
-
-        // Then check for content-based duplicates (within last 10 seconds with same text)
-        // This helps prevent duplicate messages during reconnection scenarios
-        const isDuplicate = messages.some((msg) => {
-          return (
-            msg.sender.username === sender.username &&
-            msg.text === text &&
-            Math.abs(now - msg.date) < 10000 // 10 seconds window to catch duplicates (reduced from 30)
-          );
+    // First check for exact message ID match
+    if (id) {
+      const isDuplicateById = messages.some((msg) => msg.id === id);
+      if (isDuplicateById) {
+        console.log(`API: Skipping duplicate message with ID: ${id}`);
+        return res.status(200).json({
+          message: messages.find((msg) => msg.id === id),
+          status: "already_exists",
         });
+      }
+    }
 
-        if (isDuplicate) {
-          console.log(
-            `API: Skipping duplicate message from ${sender.username}: ${text}`
-          );
-          return; // Don't save this message if it's a duplicate
-        }
+    // Then check for content-based duplicates (within last 5 seconds with same text)
+    const isDuplicate = messages.some((msg) => {
+      return (
+        msg.sender.username === sender.username &&
+        msg.text === text &&
+        Math.abs(now - msg.date) < 5000 // 5 seconds window to catch duplicates
+      );
+    });
 
-        // Add new message with API source flag for debugging
-        messages.push({
-          ...message,
-          source: "api",
-          saved_at: Date.now(),
-        });
+    if (isDuplicate) {
+      console.log(
+        `API: Skipping duplicate message from ${sender.username}: ${text}`
+      );
+      return res.status(200).json({
+        message: message,
+        status: "duplicate_content",
+      });
+    }
 
-        // Save to Redis with long expiry to ensure persistence
-        await redisService.set(
-          roomKey,
-          JSON.stringify(messages),
-          "EX",
-          60 * 60 * 24 * 30 // 30 days
-        );
+    // Add new message with API source flag for debugging
+    messages.push({
+      ...message,
+      source: "api",
+      saved_at: Date.now(),
+    });
 
-        // Notify clients through socket that the message has been persisted
-        // Using socketService to broadcast the persistence notification
-        // This helps clients keep their message states in sync
-        socketService.sendToUser(sender.username, "messagesPersisted", {
+    // Save to Redis with long expiry
+    await redisService.set(
+      roomKey,
+      JSON.stringify(messages),
+      "EX",
+      60 * 60 * 24 * 30 // 30 days
+    );
+
+    // Notify via socket that a new message has been saved
+    socketService.sendToUser(sender.username, "messagesPersisted", {
+      roomId,
+    });
+
+    // If it's a DM, also notify the recipient
+    if (!roomId.startsWith("group:")) {
+      const users = roomId.split("_");
+      const recipient = users.find((user) => user !== sender.username);
+      if (recipient) {
+        socketService.sendToUser(recipient, "messagesPersisted", {
           roomId,
         });
-
-        // If it's a DM, also notify the recipient
-        if (!roomId.startsWith("group:")) {
-          const users = roomId.split("_");
-          const recipient = users.find((user) => user !== sender.username);
-          if (recipient) {
-            socketService.sendToUser(recipient, "messagesPersisted", {
-              roomId,
-            });
-          }
-        }
-      } catch (error) {
-        console.error("Error adding message to Redis:", error);
       }
-    })();
+    }
 
-    // Respond to the client immediately without waiting for Redis
+    // Successfully saved - send back the saved message
     res.status(201).json({
       message: {
         ...message,
-        id: messageId, // Make sure the ID is sent back
+        id: messageId,
       },
+      status: "saved",
     });
   } catch (error) {
     console.error("Error sending message:", error);

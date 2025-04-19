@@ -596,6 +596,8 @@ const disconnect = async () => {
 };
 
 // ADDED: New immediate save function to ensure messages are persisted quickly
+// In src/services/socket.service.js, update the saveMessageImmediately function:
+
 const saveMessageImmediately = async (roomId, message) => {
   try {
     const roomKey = `message:${roomId}`;
@@ -606,23 +608,25 @@ const saveMessageImmediately = async (roomId, message) => {
       messages = JSON.parse(existingMessagesJson);
     }
 
-    // Check if the message already exists by ID
-    const existingIndexById = messages.findIndex(
-      (msg) => msg.id === message.id
-    );
-    if (existingIndexById >= 0) {
-      console.log(
-        `Message with ID ${message.id} already exists in room ${roomId}, skipping`
+    // Check if the message already exists by ID (strict check)
+    if (message.id) {
+      const existingIndexById = messages.findIndex(
+        (msg) => msg.id === message.id
       );
-      return; // Already exists, don't add again
+      if (existingIndexById >= 0) {
+        console.log(
+          `Message with ID ${message.id} already exists in room ${roomId}, skipping`
+        );
+        return; // Already exists, don't add again
+      }
     }
 
-    // Also check for content-based duplicates (same sender, text and close timestamp)
+    // Check for very recent duplicate content with narrower time window
     const existingIndexByContent = messages.findIndex(
       (msg) =>
         msg.sender.username === message.sender.username &&
         msg.text === message.text &&
-        Math.abs(msg.date - message.date) < 5000 // Only 5 second window for stricter matching
+        Math.abs((msg.date || 0) - (message.date || Date.now())) < 3000 // 3 second window
     );
 
     if (existingIndexByContent >= 0) {
@@ -632,10 +636,16 @@ const saveMessageImmediately = async (roomId, message) => {
       return; // Similar message exists, don't add again
     }
 
-    // Add the message with a saved timestamp for debugging
+    // Ensure the message has an ID
+    if (!message.id) {
+      message.id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    }
+
+    // Add the message with a saved timestamp and source
     messages.push({
       ...message,
       saved_at: Date.now(),
+      source: "socket",
     });
 
     // Save to Redis
