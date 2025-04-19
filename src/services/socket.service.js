@@ -607,12 +607,32 @@ const saveMessageImmediately = async (roomId, message) => {
     }
 
     // Check if the message already exists by ID
-    const existingIndex = messages.findIndex((msg) => msg.id === message.id);
-    if (existingIndex >= 0) {
+    const existingIndexById = messages.findIndex(
+      (msg) => msg.id === message.id
+    );
+    if (existingIndexById >= 0) {
+      console.log(
+        `Message with ID ${message.id} already exists in room ${roomId}, skipping`
+      );
       return; // Already exists, don't add again
     }
 
-    // Add the message
+    // Also check for content-based duplicates (same sender, text and close timestamp)
+    const existingIndexByContent = messages.findIndex(
+      (msg) =>
+        msg.sender.username === message.sender.username &&
+        msg.text === message.text &&
+        Math.abs(msg.date - message.date) < 5000 // Only 5 second window for stricter matching
+    );
+
+    if (existingIndexByContent >= 0) {
+      console.log(
+        `Similar message from ${message.sender.username} already exists in room ${roomId}, skipping`
+      );
+      return; // Similar message exists, don't add again
+    }
+
+    // Add the message with a saved timestamp for debugging
     messages.push({
       ...message,
       saved_at: Date.now(),
@@ -625,6 +645,8 @@ const saveMessageImmediately = async (roomId, message) => {
       "EX",
       60 * 60 * 24 * 30 // 30 days
     );
+
+    console.log(`Message ${message.id} saved to room ${roomId}`);
   } catch (error) {
     console.error("Error in immediate message save:", error);
   }

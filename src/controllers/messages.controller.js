@@ -178,30 +178,34 @@ exports.sendMessage = async (req, res) => {
         if (id) {
           const isDuplicateById = messages.some((msg) => msg.id === id);
           if (isDuplicateById) {
-            console.log(`Skipping duplicate message with ID: ${id}`);
+            console.log(`API: Skipping duplicate message with ID: ${id}`);
             return; // Don't save this message if it's a duplicate by ID
           }
         }
 
-        // Then check for content-based duplicates (within last 30 seconds with same text)
+        // Then check for content-based duplicates (within last 10 seconds with same text)
         // This helps prevent duplicate messages during reconnection scenarios
         const isDuplicate = messages.some((msg) => {
           return (
             msg.sender.username === sender.username &&
             msg.text === text &&
-            now - msg.date < 30000 // 30 seconds window to catch duplicates
+            Math.abs(now - msg.date) < 10000 // 10 seconds window to catch duplicates (reduced from 30)
           );
         });
 
         if (isDuplicate) {
           console.log(
-            `Skipping duplicate API message from ${sender.username}: ${text}`
+            `API: Skipping duplicate message from ${sender.username}: ${text}`
           );
           return; // Don't save this message if it's a duplicate
         }
 
-        // Add new message
-        messages.push(message);
+        // Add new message with API source flag for debugging
+        messages.push({
+          ...message,
+          source: "api",
+          saved_at: Date.now(),
+        });
 
         // Save to Redis with long expiry to ensure persistence
         await redisService.set(
@@ -211,8 +215,23 @@ exports.sendMessage = async (req, res) => {
           60 * 60 * 24 * 30 // 30 days
         );
 
-        // Don't emit socket events here as the client will handle real-time updates
-        // This avoids duplicate messages when the client uses both API and socket
+        // Notify clients through socket that the message has been persisted
+        // Using socketService to broadcast the persistence notification
+        // This helps clients keep their message states in sync
+        socketService.sendToUser(sender.username, "messagesPersisted", {
+          roomId,
+        });
+
+        // If it's a DM, also notify the recipient
+        if (!roomId.startsWith("group:")) {
+          const users = roomId.split("_");
+          const recipient = users.find((user) => user !== sender.username);
+          if (recipient) {
+            socketService.sendToUser(recipient, "messagesPersisted", {
+              roomId,
+            });
+          }
+        }
       } catch (error) {
         console.error("Error adding message to Redis:", error);
       }
