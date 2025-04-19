@@ -596,8 +596,6 @@ const disconnect = async () => {
 };
 
 // ADDED: New immediate save function to ensure messages are persisted quickly
-// In src/services/socket.service.js, update the saveMessageImmediately function:
-
 const saveMessageImmediately = async (roomId, message) => {
   try {
     const roomKey = `message:${roomId}`;
@@ -605,7 +603,20 @@ const saveMessageImmediately = async (roomId, message) => {
 
     let messages = [];
     if (existingMessagesJson) {
-      messages = JSON.parse(existingMessagesJson);
+      try {
+        messages = JSON.parse(existingMessagesJson);
+
+        // Ensure messages is an array
+        if (!Array.isArray(messages)) {
+          console.error(
+            `Invalid messages format for room ${roomId}, resetting to empty array`
+          );
+          messages = [];
+        }
+      } catch (parseError) {
+        console.error(`Error parsing messages for room ${roomId}:`, parseError);
+        messages = [];
+      }
     }
 
     // Check if the message already exists by ID (strict check)
@@ -642,11 +653,13 @@ const saveMessageImmediately = async (roomId, message) => {
     }
 
     // Add the message with a saved timestamp and source
-    messages.push({
+    const newMessage = {
       ...message,
       saved_at: Date.now(),
       source: "socket",
-    });
+    };
+
+    messages.push(newMessage);
 
     // Save to Redis
     await redisService.set(
@@ -659,6 +672,7 @@ const saveMessageImmediately = async (roomId, message) => {
     console.log(`Message ${message.id} saved to room ${roomId}`);
   } catch (error) {
     console.error("Error in immediate message save:", error);
+    // We don't throw here to avoid breaking the socket flow
   }
 };
 
@@ -669,4 +683,5 @@ module.exports = {
   getOnlineUsers,
   isUserOnline,
   disconnect,
+  saveMessageImmediately, // Export the function so it can be used elsewhere
 };

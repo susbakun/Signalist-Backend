@@ -142,13 +142,16 @@ exports.getConversationMessages = async (req, res) => {
 /**
  * Send a message
  */
-// In src/controllers/messages.controller.js, update the sendMessage function:
-
 exports.sendMessage = async (req, res) => {
   const { roomId } = req.params;
   const { sender, text, messageImageHref, id } = req.body;
 
   try {
+    // Validate required fields
+    if (!sender || !text) {
+      return res.status(400).json({ message: "Sender and text are required" });
+    }
+
     // Use provided ID or generate one
     const messageId = id || uuidv4();
     const now = Date.now();
@@ -165,86 +168,120 @@ exports.sendMessage = async (req, res) => {
 
     // Get existing messages
     const roomKey = `message:${roomId}`;
-    const existingMessagesJson = await redisService.get(roomKey);
-    let messages = [];
 
-    if (existingMessagesJson) {
-      messages = JSON.parse(existingMessagesJson);
-    }
+    try {
+      const existingMessagesJson = await redisService.get(roomKey);
+      let messages = [];
 
-    // First check for exact message ID match
-    if (id) {
-      const isDuplicateById = messages.some((msg) => msg.id === id);
-      if (isDuplicateById) {
-        console.log(`API: Skipping duplicate message with ID: ${id}`);
+      if (existingMessagesJson) {
+        try {
+          messages = JSON.parse(existingMessagesJson);
+
+          // Ensure messages is an array
+          if (!Array.isArray(messages)) {
+            console.error(
+              `Invalid messages format for room ${roomId}, resetting to empty array`
+            );
+            messages = [];
+          }
+        } catch (parseError) {
+          console.error(
+            `Error parsing messages for room ${roomId}:`,
+            parseError
+          );
+          messages = [];
+        }
+      }
+
+      // First check for exact message ID match
+      if (id) {
+        const isDuplicateById = messages.some((msg) => msg.id === id);
+        if (isDuplicateById) {
+          console.log(`API: Skipping duplicate message with ID: ${id}`);
+          // Find the existing message to return
+          const existingMsg = messages.find((msg) => msg.id === id);
+          return res.status(200).json({
+            message: existingMsg || message,
+            status: "already_exists",
+          });
+        }
+      }
+
+      // Then check for content-based duplicates (within last 5 seconds with same text)
+      const isDuplicate = messages.some((msg) => {
+        return (
+          msg.sender.username === sender.username &&
+          msg.text === text &&
+          Math.abs(now - msg.date) < 5000 // 5 seconds window to catch duplicates
+        );
+      });
+
+      if (isDuplicate) {
+        console.log(
+          `API: Skipping duplicate message from ${sender.username}: ${text}`
+        );
         return res.status(200).json({
-          message: messages.find((msg) => msg.id === id),
-          status: "already_exists",
+          message: message,
+          status: "duplicate_content",
         });
       }
-    }
 
-    // Then check for content-based duplicates (within last 5 seconds with same text)
-    const isDuplicate = messages.some((msg) => {
-      return (
-        msg.sender.username === sender.username &&
-        msg.text === text &&
-        Math.abs(now - msg.date) < 5000 // 5 seconds window to catch duplicates
+      // Add new message with API source flag for debugging
+      const newMessage = {
+        ...message,
+        source: "api",
+        saved_at: Date.now(),
+      };
+
+      messages.push(newMessage);
+
+      // Save to Redis with long expiry
+      await redisService.set(
+        roomKey,
+        JSON.stringify(messages),
+        "EX",
+        60 * 60 * 24 * 30 // 30 days
       );
-    });
 
-    if (isDuplicate) {
-      console.log(
-        `API: Skipping duplicate message from ${sender.username}: ${text}`
-      );
-      return res.status(200).json({
-        message: message,
-        status: "duplicate_content",
-      });
-    }
-
-    // Add new message with API source flag for debugging
-    messages.push({
-      ...message,
-      source: "api",
-      saved_at: Date.now(),
-    });
-
-    // Save to Redis with long expiry
-    await redisService.set(
-      roomKey,
-      JSON.stringify(messages),
-      "EX",
-      60 * 60 * 24 * 30 // 30 days
-    );
-
-    // Notify via socket that a new message has been saved
-    socketService.sendToUser(sender.username, "messagesPersisted", {
-      roomId,
-    });
-
-    // If it's a DM, also notify the recipient
-    if (!roomId.startsWith("group:")) {
-      const users = roomId.split("_");
-      const recipient = users.find((user) => user !== sender.username);
-      if (recipient) {
-        socketService.sendToUser(recipient, "messagesPersisted", {
+      // Notify via socket that a new message has been saved
+      try {
+        socketService.sendToUser(sender.username, "messagesPersisted", {
           roomId,
         });
-      }
-    }
 
-    // Successfully saved - send back the saved message
-    res.status(201).json({
-      message: {
-        ...message,
-        id: messageId,
-      },
-      status: "saved",
-    });
+        // If it's a DM, also notify the recipient
+        if (!roomId.startsWith("group:")) {
+          const users = roomId.split("_");
+          const recipient = users.find((user) => user !== sender.username);
+          if (recipient) {
+            socketService.sendToUser(recipient, "messagesPersisted", {
+              roomId,
+            });
+          }
+        }
+      } catch (socketError) {
+        console.error("Error notifying socket about message:", socketError);
+        // Continue even if socket notification fails
+      }
+
+      // Successfully saved - send back the saved message
+      return res.status(201).json({
+        message: newMessage,
+        status: "saved",
+      });
+    } catch (redisError) {
+      console.error("Redis error when saving message:", redisError);
+      return res.status(500).json({
+        message: "Database error when saving message",
+        error: redisError.message,
+      });
+    }
   } catch (error) {
     console.error("Error sending message:", error);
-    res.status(500).json({ message: "Failed to send message" });
+    return res.status(500).json({
+      message: "Failed to send message",
+      error: error.message,
+    });
   }
 };
 

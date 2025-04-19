@@ -101,9 +101,30 @@ class RedisService {
         return this.inMemoryStore[key] || null;
       }
       const data = await this.client.get(key);
-      return data ? JSON.parse(data) : null;
+
+      if (!data) return null;
+
+      // Try to parse as JSON, if it fails, return the raw string
+      try {
+        return JSON.parse(data);
+      } catch (parseError) {
+        console.error(`Error parsing JSON for key ${key}:`, parseError);
+        // If this is a message key and the data is corrupted, reset it to an empty array
+        if (key.startsWith("message:")) {
+          console.log(
+            `Resetting corrupted message data for ${key} to empty array`
+          );
+          await this.set(key, JSON.stringify([]));
+          return [];
+        }
+        return data; // Return the raw string if not a message key
+      }
     } catch (error) {
       console.error(`Error getting data for key ${key}:`, error);
+      // For message keys, return empty array on error to prevent app crashes
+      if (key.startsWith("message:")) {
+        return [];
+      }
       throw error;
     }
   }
