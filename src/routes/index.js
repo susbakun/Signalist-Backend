@@ -11,12 +11,14 @@ const dataRoutes = require("./data.routes");
 const postsRoutes = require("./posts.routes");
 const signalsRoutes = require("./signals.routes");
 const usersRoutes = require("./users.routes");
+const newsRoutes = require("./news.routes");
 
 // Define routes
 router.use("/data", dataRoutes);
 router.use("/posts", postsRoutes);
 router.use("/signals", signalsRoutes);
 router.use("/users", usersRoutes);
+router.use("/news", newsRoutes);
 
 // Upload routes for different image types
 router.post(
