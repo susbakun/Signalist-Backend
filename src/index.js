@@ -9,6 +9,7 @@ const usersRoutes = require("./routes/users.routes");
 const signalsRoutes = require("./routes/signals.routes");
 const postsRoutes = require("./routes/posts.routes");
 const messagesRoutes = require("./routes/messages.routes");
+const newsRoutes = require("./routes/news.routes");
 const socketService = require("./services/socket.service");
 
 // Import controllers for upload handling
@@ -82,6 +83,7 @@ app.use("/api/users", usersRoutes);
 app.use("/api/signals", signalsRoutes);
 app.use("/api/posts", postsRoutes);
 app.use("/api/messages", messagesRoutes);
+app.use("/api/news", newsRoutes);
 
 // Upload routes
 app.post(
