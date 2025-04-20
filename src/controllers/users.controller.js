@@ -103,17 +103,19 @@ exports.registerUser = async (req, res) => {
     // Check if user already exists
     const existingUser = await findUserByUsername(username);
     if (existingUser) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: "Username already taken",
+        field: "username",
       });
     }
 
     const existingEmail = await findUserByEmail(email);
     if (existingEmail) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: "Email already registered",
+        field: "email",
       });
     }
 
@@ -160,7 +162,7 @@ exports.registerUser = async (req, res) => {
     console.error("Error registering user:", error);
     res.status(500).json({
       success: false,
-      message: "Error creating user",
+      message: `Error creating user: ${error.message || "Unknown error"}`,
     });
   }
 };
