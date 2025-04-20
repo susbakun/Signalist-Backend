@@ -10,6 +10,7 @@ const signalsRoutes = require("./routes/signals.routes");
 const postsRoutes = require("./routes/posts.routes");
 const messagesRoutes = require("./routes/messages.routes");
 const newsRoutes = require("./routes/news.routes");
+
 const socketService = require("./services/socket.service");
 
 // Import controllers for upload handling
