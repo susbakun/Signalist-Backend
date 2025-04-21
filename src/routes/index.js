@@ -11,14 +11,15 @@ const dataRoutes = require("./data.routes");
 const postsRoutes = require("./posts.routes");
 const signalsRoutes = require("./signals.routes");
 const usersRoutes = require("./users.routes");
-const newsRoutes = require("./news.routes");
+// const newsRoutes = require("./news.routes"); // Already imported in main index.js
 
 // Define routes
 router.use("/data", dataRoutes);
 router.use("/posts", postsRoutes);
 router.use("/signals", signalsRoutes);
 router.use("/users", usersRoutes);
-router.use("/news", newsRoutes);
+// News routes are handled in the main index.js file at '/api/news'
+// router.use("/news", newsRoutes); // Commented out to avoid route conflict
 
 // Upload routes for different image types
 router.post(
