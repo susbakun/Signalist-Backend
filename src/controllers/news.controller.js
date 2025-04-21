@@ -70,29 +70,52 @@ exports.getNews = async (req, res) => {
         const enrichedResults = await Promise.all(
           response.data.results.map(async (newsItem) => {
             try {
-              // Try to fetch image URL from microlink
+              // Try to fetch metadata from microlink
               const microlinkResponse = await axios.get(
                 `https://api.microlink.io`,
                 {
-                  params: { url: newsItem.url },
+                  params: {
+                    url: newsItem.url,
+                    fields: "image,description,content", // Request more fields
+                  },
                 }
               );
 
+              const microlinkData = microlinkResponse.data.data;
+
+              // Create enriched news item with additional metadata
+              const enrichedItem = { ...newsItem };
+
               // Add image URL if available
-              if (
-                microlinkResponse.data.data &&
-                microlinkResponse.data.data.image &&
-                microlinkResponse.data.data.image.url
-              ) {
-                return {
-                  ...newsItem,
-                  image_url: microlinkResponse.data.data.image.url,
-                };
+              if (microlinkData?.image?.url) {
+                enrichedItem.image_url = microlinkData.image.url;
               }
-              return newsItem;
+
+              // Add description if available (otherwise keep original title)
+              if (microlinkData?.description) {
+                enrichedItem.description = microlinkData.description;
+              } else {
+                enrichedItem.description = newsItem.title;
+              }
+
+              // Add content summary if available
+              if (microlinkData?.content) {
+                enrichedItem.content_summary =
+                  microlinkData.content.substring(0, 300) +
+                  (microlinkData.content.length > 300 ? "..." : "");
+              }
+
+              return enrichedItem;
             } catch (error) {
-              console.error("Error enriching news with image:", error.message);
-              return newsItem;
+              console.error(
+                "Error enriching news with Microlink:",
+                error.message
+              );
+              // Return the original item with title as description if Microlink fails
+              return {
+                ...newsItem,
+                description: newsItem.title,
+              };
             }
           })
         );
