@@ -3,7 +3,7 @@ const crypto = require("crypto");
 const redisService = require("../services/redis.service");
 
 // CryptoPanic API configuration
-const CRYPTOPANIC_API_URL = "https://cryptopanic.com/api/v2/posts/";
+const CRYPTOPANIC_API_URL = "https://cryptopanic.com/api/developer/v2/posts/";
 const CRYPTOPANIC_API_KEY = process.env.CRYPTOPANIC_API_KEY;
 const CACHE_TTL = 5 * 60; // 5 minutes cache
 
