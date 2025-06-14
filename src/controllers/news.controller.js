@@ -60,6 +60,7 @@ exports.getNews = async (req, res) => {
 
     try {
       const response = await axios.get(CRYPTOPANIC_API_URL, { params });
+      console.log("Raw API response:", JSON.stringify(response.data, null, 2));
 
       // Enrich with images using microlink if results exist
       if (
