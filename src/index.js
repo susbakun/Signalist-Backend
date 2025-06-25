@@ -13,7 +13,6 @@ const newsRoutes = require("./routes/news.routes");
 
 const socketService = require("./services/socket.service");
 
-// Import controllers for upload handling
 const usersController = require("./controllers/users.controller");
 const signalsController = require("./controllers/signals.controller");
 const postsController = require("./controllers/posts.controller");
