@@ -4,14 +4,11 @@ const cors = require("cors");
 const morgan = require("morgan");
 const multer = require("multer");
 const http = require("http");
-const { Server } = require("socket.io");
 const usersRoutes = require("./routes/users.routes");
 const signalsRoutes = require("./routes/signals.routes");
 const postsRoutes = require("./routes/posts.routes");
-const messagesRoutes = require("./routes/messages.routes");
 const newsRoutes = require("./routes/news.routes");
-
-const socketService = require("./services/socket.service");
+const messagesRoutes = require("./routes/messages.routes");
 
 const usersController = require("./controllers/users.controller");
 const signalsController = require("./controllers/signals.controller");
@@ -30,25 +27,75 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",")
   : ["https://signalisttech.com", "http://localhost:5173"];
 
-// Setup Socket.io with CORS configuration
+// Initialize Socket.io
+const { Server } = require("socket.io");
 const io = new Server(server, {
   cors: {
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps, curl, etc.)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) !== -1) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
 });
 
-// Initialize socket service
-socketService.initialize(io);
+// Socket.io connection handling
+io.on("connection", (socket) => {
+  console.log(`Socket connected: ${socket.id}`);
+
+  // Authenticate user and join their personal room
+  socket.on("authenticate", (username) => {
+    if (username) {
+      socket.join(username);
+      console.log(`User ${username} authenticated and joined personal room`);
+    }
+  });
+
+  // Handle new messages (this is for frontend socket events, not used currently)
+  socket.on("sendMessage", async (data) => {
+    try {
+      const { roomId, message, recipients } = data;
+      console.log(`Received sendMessage event for room ${roomId}:`, message);
+
+      // Emit to all recipients
+      if (recipients && Array.isArray(recipients)) {
+        recipients.forEach((recipient) => {
+          io.to(recipient).emit("newMessage", message);
+        });
+      }
+
+      // Also emit to the room itself for group conversations
+      io.to(roomId).emit("newMessage", message);
+    } catch (error) {
+      console.error("Error handling sendMessage event:", error);
+    }
+  });
+
+  // Join a specific chat room
+  socket.on("joinRoom", (roomId) => {
+    if (roomId) {
+      socket.join(roomId);
+      console.log(`Socket ${socket.id} joined room: ${roomId}`);
+
+      // Get all rooms the socket is in
+      console.log(
+        `Socket ${socket.id} is now in rooms:`,
+        Array.from(socket.rooms)
+      );
+    }
+  });
+
+  // Leave a specific chat room
+  socket.on("leaveRoom", (roomId) => {
+    if (roomId) {
+      socket.leave(roomId);
+      console.log(`Socket ${socket.id} left room: ${roomId}`);
+    }
+  });
+
+  // Handle disconnection
+  socket.on("disconnect", (reason) => {
+    console.log(`Socket disconnected: ${socket.id}, reason: ${reason}`);
+  });
+});
 
 // Middleware
 app.use(
@@ -69,6 +116,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
 
+// Make io instance available to all routes
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 // Multer setup for file uploads
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
@@ -82,8 +135,8 @@ app.get("/", (req, res) => {
 app.use("/api/users", usersRoutes);
 app.use("/api/signals", signalsRoutes);
 app.use("/api/posts", postsRoutes);
-app.use("/api/messages", messagesRoutes);
 app.use("/api/news", newsRoutes);
+app.use("/api/messages", messagesRoutes);
 
 // Upload routes
 app.post(
@@ -101,6 +154,7 @@ app.post(
   upload.single("file"),
   usersController.uploadImage
 );
+
 app.post(
   "/api/upload/messages",
   upload.single("file"),
@@ -125,13 +179,5 @@ server.listen(port, () => {
 // Handle graceful shutdown
 process.on("SIGINT", () => {
   console.log("Shutting down gracefully");
-  socketService
-    .disconnect()
-    .then(() => {
-      process.exit(0);
-    })
-    .catch((err) => {
-      console.error("Error during shutdown:", err);
-      process.exit(1);
-    });
+  process.exit(0);
 });

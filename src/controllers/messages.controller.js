@@ -1,387 +1,352 @@
 const { v4: uuidv4 } = require("uuid");
 const redisService = require("../services/redis.service");
-const socketService = require("../services/socket.service");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-
-// Initialize S3 client
-const s3Client = new S3Client({
-  region: "default",
-  endpoint: process.env.LIARA_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.LIARA_BUCKET_ACCESS_KEY,
-    secretAccessKey: process.env.LIARA_SECRET_KEY,
-  },
-});
-
-// Create an in-memory message cache to avoid frequent Redis reads
-const messageCache = new Map();
-const MESSAGE_CACHE_TTL = 60 * 1000; // 60 seconds in milliseconds
 
 /**
- * Get all conversations for a user
+ * Helper function to get a conversation by ID
+ * @param {string} roomId - The conversation room ID
+ * @returns {Promise<Array>} - The messages in the conversation
  */
-exports.getUserConversations = async (req, res) => {
-  const { username } = req.params;
-
+async function getConversationFromRedis(roomId) {
   try {
-    // Find all message keys that might involve this user
+    const conversation = await redisService.get(`message:${roomId}`);
+    return conversation ? JSON.parse(conversation) : [];
+  } catch (error) {
+    console.error(`Error getting conversation ${roomId}:`, error);
+    return [];
+  }
+}
+
+/**
+ * Helper function to get all conversations for a user
+ * @param {string} username - The username to get conversations for
+ * @returns {Promise<Object>} - The user's conversations
+ */
+async function getUserConversationsFromRedis(username) {
+  try {
+    // Get all conversation keys that involve this user
     const conversationKeys = await redisService.keys(`message:*${username}*`);
-
-    if (!conversationKeys.length) {
-      return res.json({ conversations: {} });
-    }
-
     const conversations = {};
 
     // Process each conversation
     for (const key of conversationKeys) {
-      const roomId = key.replace("message:", "");
+      const roomId = key.split(":")[1]; // Extract roomId from key format "message:roomId"
+      const messages = await getConversationFromRedis(roomId);
 
-      // Check if we have a fresh cache entry
-      const cacheKey = `${roomId}:${username}`;
-      const cachedData = messageCache.get(cacheKey);
-      const now = Date.now();
+      if (messages.length === 0) continue;
 
-      if (cachedData && now - cachedData.timestamp < MESSAGE_CACHE_TTL) {
-        // Use cached data if available and fresh
-        conversations[roomId] = cachedData.data;
-        continue;
-      }
-
-      // Otherwise fetch from Redis
-      const messagesJson = await redisService.get(key);
-      if (!messagesJson) continue;
-
-      const messages = JSON.parse(messagesJson);
-
-      // Determine conversation type (DM or group)
-      const users = roomId.split("_");
-      const isGroup = users.length > 2 || roomId.startsWith("group:");
+      // Determine if this is a DM or group conversation
+      const isGroup = roomId.startsWith("group-");
 
       if (isGroup) {
-        // Group conversation logic
-        const groupInfoJson = await redisService.get(`group:${roomId}`);
-        if (!groupInfoJson) continue;
+        // Group conversation
+        const groupInfo = {
+          groupName: roomId.split("group-")[1],
+          groupImageHref: null, // You can implement group images later
+        };
 
-        const groupInfo = JSON.parse(groupInfoJson);
+        // Get unique users from messages
+        const usersInfo = [];
+        const userMap = new Map();
+
+        messages.forEach((message) => {
+          if (!userMap.has(message.sender.username)) {
+            userMap.set(message.sender.username, message.sender);
+            usersInfo.push(message.sender);
+          }
+        });
 
         conversations[roomId] = {
+          isGroup: true,
+          groupInfo,
+          usersInfo,
           userInfo: null,
           messages,
-          isGroup: true,
-          groupInfo: {
-            groupName: groupInfo.groupName,
-            groupImageId: groupInfo.groupImageId,
-          },
-          usersInfo: groupInfo.members,
         };
-
-        // Update cache
-        messageCache.set(cacheKey, {
-          data: conversations[roomId],
-          timestamp: now,
-        });
       } else {
-        // Direct message logic
-        const otherUser = users.find((u) => u !== username);
+        // DM conversation - determine the other user
+        const parts = roomId.split("-");
+        const otherUsername = parts[0] === username ? parts[1] : parts[0];
 
-        // Get user info
-        const userJson = await redisService.get(`user:${otherUser}`);
-        if (!userJson) continue;
+        // Find the other user's info from messages
+        const otherUserInfo = messages.find(
+          (m) => m.sender.username === otherUsername
+        )?.sender;
 
-        const user = JSON.parse(userJson);
-
-        conversations[roomId] = {
-          userInfo: {
-            name: user.name,
-            username: user.username,
-            imageUrl: user.imageUrl || "",
-          },
-          messages,
-          isGroup: false,
-          groupInfo: null,
-          usersInfo: null,
-        };
-
-        // Update cache
-        messageCache.set(cacheKey, {
-          data: conversations[roomId],
-          timestamp: now,
-        });
+        if (otherUserInfo) {
+          conversations[roomId] = {
+            isGroup: false,
+            userInfo: otherUserInfo,
+            groupInfo: null,
+            usersInfo: null,
+            messages,
+          };
+        }
       }
     }
 
-    res.json({ conversations });
+    return conversations;
   } catch (error) {
-    console.error("Error getting user conversations:", error);
-    res.status(500).json({ message: "Failed to get conversations" });
+    console.error(`Error getting conversations for ${username}:`, error);
+    return {};
   }
-};
+}
+
+/**
+ * Get all conversations for a user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+async function getUserConversations(req, res) {
+  try {
+    const { username } = req.params;
+
+    if (!username) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Username is required" });
+    }
+
+    const conversations = await getUserConversationsFromRedis(username);
+
+    return res.status(200).json({
+      success: true,
+      conversations,
+    });
+  } catch (error) {
+    console.error("Error in getUserConversations:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching conversations",
+      error: error.message,
+    });
+  }
+}
 
 /**
  * Get messages for a specific conversation
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
-exports.getConversationMessages = async (req, res) => {
-  const { roomId } = req.params;
-
+async function getConversationMessages(req, res) {
   try {
-    const messagesJson = await redisService.get(`message:${roomId}`);
+    const { roomId } = req.params;
 
-    if (!messagesJson) {
-      return res.json({ messages: [] });
+    if (!roomId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Room ID is required" });
     }
 
-    const messages = JSON.parse(messagesJson);
-    res.json({ messages });
+    const messages = await getConversationFromRedis(roomId);
+
+    return res.status(200).json({
+      success: true,
+      messages,
+    });
   } catch (error) {
-    console.error("Error getting conversation messages:", error);
-    res.status(500).json({ message: "Failed to get messages" });
-  }
-};
-
-/**
- * Send a message
- */
-exports.sendMessage = async (req, res) => {
-  const { roomId } = req.params;
-  const { sender, text, messageImageHref, id } = req.body;
-
-  if (!sender || !text) {
-    return res.status(400).json({ message: "Sender and text are required" });
-  }
-
-  const messageId = id || uuidv4();
-  const now = Date.now();
-  const roomKey = `message:${roomId}`;
-
-  let messages = [];
-
-  try {
-    const existingMessagesJson = await redisService.get(roomKey);
-    if (existingMessagesJson) {
-      try {
-        messages = JSON.parse(existingMessagesJson);
-        if (!Array.isArray(messages)) messages = [];
-      } catch {
-        messages = [];
-      }
-    }
-
-    // Duplicate by ID
-    if (id && messages.some((msg) => msg.id === id)) {
-      const existingMsg = messages.find((msg) => msg.id === id);
-      console.log(`Skipping duplicate message with ID: ${id}`);
-      return res.status(200).json({
-        message: existingMsg,
-        status: "already_exists",
-      });
-    }
-
-    // Duplicate by content (within 5 seconds)
-    const isDuplicate = messages.some(
-      (msg) =>
-        msg.sender.username === sender.username &&
-        msg.text === text &&
-        Math.abs(now - msg.date) < 5000
-    );
-
-    if (isDuplicate) {
-      console.log(`Duplicate message from ${sender.username}: ${text}`);
-      return res.status(200).json({
-        message: { id: messageId, sender, text, date: now },
-        status: "duplicate_content",
-      });
-    }
-
-    // Compose new message
-    const newMessage = {
-      id: messageId,
-      sender,
-      text,
-      date: now,
-      ...(messageImageHref && { messageImageHref }),
-      source: "api",
-      saved_at: Date.now(),
-    };
-
-    messages.push(newMessage);
-
-    // 🛠 Fix: Proper EX usage
-    await redisService.set(
-      roomKey,
-      JSON.stringify(messages),
-      "EX",
-      60 * 60 * 24 * 30
-    ); // 30 days
-
-    // Notify sender and recipient
-    try {
-      socketService.sendToUser(sender.username, "messagesPersisted", {
-        roomId,
-      });
-
-      if (!roomId.startsWith("group:")) {
-        const users = roomId.split("_");
-        const recipient = users.find((u) => u !== sender.username);
-        if (recipient) {
-          socketService.sendToUser(recipient, "messagesPersisted", { roomId });
-        }
-      }
-    } catch (socketError) {
-      console.error("Socket notification failed:", socketError);
-    }
-
-    return res.status(201).json({ message: newMessage, status: "saved" });
-  } catch (err) {
-    console.error("Error saving message:", err);
+    console.error("Error in getConversationMessages:", error);
     return res.status(500).json({
-      message: "Failed to save message",
-      error: err.message,
+      success: false,
+      message: "Error fetching messages",
+      error: error.message,
     });
   }
-};
+}
+
+/**
+ * Send a message to a conversation
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+async function sendMessage(req, res) {
+  try {
+    const { roomId } = req.params;
+    const { sender, text, messageImageHref } = req.body;
+
+    if (!roomId || !sender || !text) {
+      return res.status(400).json({
+        success: false,
+        message: "Room ID, sender information, and message text are required",
+      });
+    }
+
+    // Get existing messages
+    const messages = await getConversationFromRedis(roomId);
+
+    // Create new message
+    const newMessage = {
+      id: uuidv4(),
+      sender,
+      text,
+      date: Date.now(),
+      messageImageHref: messageImageHref || null,
+    };
+
+    // Add message to conversation
+    messages.push(newMessage);
+
+    // Save updated conversation
+    await redisService.set(`message:${roomId}`, JSON.stringify(messages));
+
+    // Emit the message to all users in the room via socket
+    if (req.io) {
+      console.log(`Emitting newMessage to room ${roomId}:`, newMessage);
+      req.io.to(roomId).emit("newMessage", newMessage);
+
+      // Also emit to all connected sockets for debugging
+      const socketsInRoom = await req.io.in(roomId).allSockets();
+      console.log(`Sockets in room ${roomId}:`, Array.from(socketsInRoom));
+    } else {
+      console.error("Socket.io instance not available in request");
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: newMessage,
+    });
+  } catch (error) {
+    console.error("Error in sendMessage:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error sending message",
+      error: error.message,
+    });
+  }
+}
 
 /**
  * Create a new direct message conversation
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
-exports.createDMConversation = async (req, res) => {
-  const { user1, user2 } = req.body;
-
-  if (!user1 || !user2) {
-    return res.status(400).json({ message: "Both users are required" });
-  }
-
+async function createDMConversation(req, res) {
   try {
-    // Create a deterministic room ID by sorting usernames
+    const { user1, user2 } = req.body;
+
+    if (!user1 || !user2) {
+      return res.status(400).json({
+        success: false,
+        message: "Both users' information is required",
+      });
+    }
+
+    // Create a unique room ID for the conversation (sorted usernames to ensure consistency)
     const users = [user1.username, user2.username].sort();
-    const roomId = `${users[0]}_${users[1]}`;
+    const roomId = `${users[0]}-${users[1]}`;
 
     // Check if conversation already exists
     const exists = await redisService.exists(`message:${roomId}`);
 
     if (!exists) {
-      // Initialize empty conversation
+      // Create empty conversation
       await redisService.set(`message:${roomId}`, JSON.stringify([]));
     }
 
-    // Return conversation info
-    res.status(201).json({
+    // Return the conversation structure expected by the frontend
+    return res.status(201).json({
+      success: true,
       roomId,
-      userInfo: user2, // Return info about the other user
-      messages: [],
       isGroup: false,
+      userInfo: user2, // From user1's perspective
       groupInfo: null,
       usersInfo: null,
-    });
-  } catch (error) {
-    console.error("Error creating conversation:", error);
-    res.status(500).json({ message: "Failed to create conversation" });
-  }
-};
-
-/**
- * Create a group conversation
- */
-exports.createGroupConversation = async (req, res) => {
-  const { groupName, members, createdBy } = req.body;
-
-  if (!groupName || !members || !members.length || !createdBy) {
-    return res
-      .status(400)
-      .json({ message: "Group name, members, and creator are required" });
-  }
-
-  try {
-    // Create unique room ID for the group
-    const roomId = `group:${uuidv4()}`;
-
-    // Include creator in members if not already present
-    if (!members.find((m) => m.username === createdBy.username)) {
-      members.push(createdBy);
-    }
-
-    // Create group info
-    const groupInfo = {
-      groupName,
-      members,
-      createdBy: createdBy.username,
-      createdAt: Date.now(),
-    };
-
-    // Save group info and initialize empty message list
-    await redisService.set(`group:${roomId}`, JSON.stringify(groupInfo));
-    await redisService.set(`message:${roomId}`, JSON.stringify([]));
-
-    // Return group info
-    res.status(201).json({
-      roomId,
-      userInfo: null,
       messages: [],
-      isGroup: true,
-      groupInfo: {
-        groupName,
-        groupImageId: null,
-      },
-      usersInfo: members,
     });
   } catch (error) {
-    console.error("Error creating group:", error);
-    res.status(500).json({ message: "Failed to create group" });
-  }
-};
-
-/**
- * Upload an image for a message
- */
-exports.uploadImage = async (req, res) => {
-  try {
-    const file = req.file;
-    if (!file) {
-      return res.status(400).json({ message: "No file uploaded" });
-    }
-
-    const params = {
-      Bucket: "messages",
-      Key: `${uuidv4()}-${file.originalname}`,
-      Body: file.buffer,
-      ContentType: file.mimetype,
-    };
-
-    await s3Client.send(new PutObjectCommand(params));
-
-    const imageUrl = `${process.env.LIARA_ENDPOINT}/messages/${params.Key}`;
-    res.status(200).json({ url: imageUrl, messageImageId: params.Key });
-  } catch (error) {
-    console.error("Error uploading message image:", error);
-    res.status(500).json({ message: "Error uploading message image" });
-  }
-};
-
-/**
- * Extract usernames from a group chat
- */
-function extractUsersFromGroup(roomId) {
-  try {
-    const groupInfoJson = redisService.get(`group:${roomId}`);
-    if (!groupInfoJson) return [];
-
-    const groupInfo = JSON.parse(groupInfoJson);
-    return groupInfo.members.map((member) => member.username);
-  } catch (error) {
-    console.error("Error extracting users from group:", error);
-    return [];
+    console.error("Error in createDMConversation:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error creating conversation",
+      error: error.message,
+    });
   }
 }
 
-// Clear the message cache periodically (every 5 minutes)
-setInterval(
-  () => {
-    const now = Date.now();
-    for (const [key, data] of messageCache.entries()) {
-      if (now - data.timestamp > MESSAGE_CACHE_TTL) {
-        messageCache.delete(key);
-      }
+/**
+ * Create a new group conversation
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+async function createGroupConversation(req, res) {
+  try {
+    const { groupName, members, createdBy } = req.body;
+
+    if (!groupName || !members || !members.length || !createdBy) {
+      return res.status(400).json({
+        success: false,
+        message: "Group name, members, and creator information are required",
+      });
     }
-  },
-  5 * 60 * 1000
-);
+
+    // Create a unique room ID for the group
+    const roomId = `group-${groupName}-${Date.now()}`;
+
+    // Create empty conversation
+    await redisService.set(`message:${roomId}`, JSON.stringify([]));
+
+    // Return the group conversation structure expected by the frontend
+    return res.status(201).json({
+      success: true,
+      roomId,
+      isGroup: true,
+      userInfo: null,
+      groupInfo: {
+        groupName,
+        groupImageHref: null, // You can implement group images later
+      },
+      usersInfo: members,
+      messages: [],
+    });
+  } catch (error) {
+    console.error("Error in createGroupConversation:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error creating group conversation",
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Upload an image for a message
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+async function uploadImage(req, res) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No file uploaded",
+      });
+    }
+
+    // Generate a unique filename
+    const filename = `message_${Date.now()}_${uuidv4()}.jpg`;
+
+    // In a real implementation, you would save the file to a storage service
+    // For this example, we'll just return a mock URL
+    const url = `https://signalist-backend.liara.run/uploads/messages/${filename}`;
+
+    return res.status(200).json({
+      success: true,
+      url,
+    });
+  } catch (error) {
+    console.error("Error uploading message image:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error uploading image",
+      error: error.message,
+    });
+  }
+}
+
+module.exports = {
+  getUserConversations,
+  getConversationMessages,
+  sendMessage,
+  createDMConversation,
+  createGroupConversation,
+  uploadImage,
+};

@@ -626,7 +626,7 @@ exports.updateProfile = async (req, res) => {
         score: user.score || 0,
       });
 
-      // 3. Update messages
+      // 3. Update messages in the new messaging system
       await updateUserInMessages(oldUsername, simplifiedUserData);
     } catch (syncError) {
       console.error("Error syncing user data:", syncError);
@@ -742,11 +742,11 @@ async function updateUserInSignals(username, userData) {
   }
 }
 
-// Helper function to update user references in messages
+// Helper function to update user references in messages with the new messaging system
 async function updateUserInMessages(username, userData) {
   try {
     // Get all message conversations that might involve this user
-    const messageKeys = await redisService.keys(`message:*${username}*`);
+    const messageKeys = await redisService.keys(`message:*`);
 
     for (const key of messageKeys) {
       const messagesData = await redisService.get(key);
@@ -755,7 +755,7 @@ async function updateUserInMessages(username, userData) {
       let messages = JSON.parse(messagesData);
       let modified = false;
 
-      // Update sender in messages
+      // Update sender information in messages
       messages = messages.map((message) => {
         if (message.sender && message.sender.username === username) {
           modified = true;
@@ -775,11 +775,13 @@ async function updateUserInMessages(username, userData) {
       // Save updated messages if modified
       if (modified) {
         await redisService.set(key, JSON.stringify(messages));
+        console.log(`Updated user references in message conversation: ${key}`);
       }
     }
   } catch (error) {
     console.error("Error updating user in messages:", error);
-    throw error;
+    // Don't throw the error to prevent profile update from failing
+    // Just log it so we're aware of the issue
   }
 }
 
