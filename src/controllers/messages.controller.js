@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require("uuid");
 const redisService = require("../services/redis.service");
+const axios = require("axios");
 
 /**
  * Helper function to get a conversation by ID
@@ -68,19 +69,46 @@ async function getUserConversationsFromRedis(username) {
         const otherUsername = parts[0] === username ? parts[1] : parts[0];
 
         // Find the other user's info from messages
-        const otherUserInfo = messages.find(
+        let otherUserInfo = messages.find(
           (m) => m.sender.username === otherUsername
         )?.sender;
 
-        if (otherUserInfo) {
-          conversations[roomId] = {
-            isGroup: false,
-            userInfo: otherUserInfo,
-            groupInfo: null,
-            usersInfo: null,
-            messages,
-          };
+        // If no messages from other user exist, try to fetch user data
+        if (!otherUserInfo) {
+          try {
+            // Try to fetch user data from users API
+            const baseUrl =
+              process.env.NODE_ENV === "production"
+                ? "https://signalist-backend.liara.run/api"
+                : "http://localhost:3000/api";
+            const userResponse = await axios.get(
+              `${baseUrl}/users/${otherUsername}`
+            );
+            otherUserInfo = {
+              username: userResponse.data.username,
+              name: userResponse.data.name,
+              imageUrl: userResponse.data.imageUrl,
+            };
+          } catch (error) {
+            console.log(
+              `Could not fetch user data for ${otherUsername}, using fallback`
+            );
+            // Fallback user info
+            otherUserInfo = {
+              username: otherUsername,
+              name: otherUsername,
+              imageUrl: null,
+            };
+          }
         }
+
+        conversations[roomId] = {
+          isGroup: false,
+          userInfo: otherUserInfo,
+          groupInfo: null,
+          usersInfo: null,
+          messages,
+        };
       }
     }
 
