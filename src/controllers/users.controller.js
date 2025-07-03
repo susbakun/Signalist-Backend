@@ -145,16 +145,28 @@ exports.registerUser = async (req, res) => {
     await redisService.set(`user:${username}`, JSON.stringify(newUser));
 
     // Create token
-    const token = jwt.sign({ id: username }, process.env.JWT_SECRET, {
-      expiresIn: "1d",
-    });
+    const token = jwt.sign(
+      { id: username },
+      process.env.JWT_SECRET || "your-secret-key",
+      { expiresIn: "1d" }
+    );
 
     // Set token as HTTP-only cookie
-    res.cookie("authToken", token, {
+    // In production, check if we're behind a proxy (common in cloud deployments)
+    const isSecure =
+      process.env.NODE_ENV === "production" &&
+      (req.secure || req.headers["x-forwarded-proto"] === "https");
+
+    const cookieOptions = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
+      secure: isSecure, // Only secure if actually HTTPS
+      sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax", // Use lax instead of strict
       maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
-    });
+      path: "/",
+    };
+
+    console.log("🍪 [REGISTER] Setting cookie with options:", cookieOptions);
+    res.cookie("authToken", token, cookieOptions);
 
     // Return user without password and token
     const { password: _, ...safeUser } = newUser;
@@ -175,10 +187,15 @@ exports.registerUser = async (req, res) => {
 exports.logoutUser = async (req, res) => {
   try {
     // Clear the authentication cookie
+    const isSecure =
+      process.env.NODE_ENV === "production" &&
+      (req.secure || req.headers["x-forwarded-proto"] === "https");
+
     res.clearCookie("authToken", {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+      secure: isSecure,
+      sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax",
+      path: "/",
     });
 
     res.json({
@@ -231,15 +248,33 @@ exports.loginUser = async (req, res) => {
     });
 
     // Set token as HTTP-only cookie
+    // In production, check if we're behind a proxy (common in cloud deployments)
+    const isSecure =
+      process.env.NODE_ENV === "production" &&
+      (req.secure || req.headers["x-forwarded-proto"] === "https");
+
     const cookieOptions = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
-      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax", // More permissive in development
+      secure: isSecure, // Only secure if actually HTTPS
+      sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax", // Use lax instead of strict
       maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
+      // Add domain and path for clarity
+      path: "/",
     };
+
+    // If in production but not secure, add warning
+    if (process.env.NODE_ENV === "production" && !isSecure) {
+      console.log(
+        "⚠️  WARNING: Production mode but connection not secure - cookie may not work properly"
+      );
+    }
 
     console.log("🍪 Setting cookie with options:", cookieOptions);
     console.log("🎫 Token being set:", token.substring(0, 20) + "...");
+    console.log("🌐 Request host:", req.headers.host);
+    console.log("🌐 Request protocol:", req.protocol);
+    console.log("🌐 Request secure:", req.secure);
+    console.log("🌐 Environment:", process.env.NODE_ENV);
 
     res.cookie("authToken", token, cookieOptions);
 
