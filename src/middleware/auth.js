@@ -7,6 +7,7 @@ const auth = (req, res, next) => {
   try {
     // Get token from cookies instead of Authorization header
     const token = req.cookies.authToken;
+    console.log(token);
 
     if (!token) {
       return res.status(401).json({
