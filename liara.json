@@ -4,5 +4,9 @@
     "version": "22",
     "mirror": true,
     "timezone": "Asia/Tehran"
+  },
+
+  "build": {
+    "location": "germany"
   }
 }
