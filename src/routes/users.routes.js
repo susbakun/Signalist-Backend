@@ -6,7 +6,7 @@ const auth = require("../middleware/auth");
 // Get all users
 router.get("/", usersController.getAllUsers);
 
-// Get current authenticated user (requires authentication) - MUST come before /:username
+// Get current authenticated user (requires authentication)
 router.get("/me", auth, usersController.getCurrentUser);
 
 // Get user by username - MUST come after specific routes
