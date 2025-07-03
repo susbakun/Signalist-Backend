@@ -6,6 +6,31 @@ const auth = require("../middleware/auth");
 // Get all users
 router.get("/", usersController.getAllUsers);
 
+// Debug endpoint to test cookies (no auth required)
+router.get("/debug-cookies", (req, res) => {
+  console.log("🐛 Debug cookies endpoint called");
+  console.log("🍪 All cookies:", req.cookies);
+  console.log("🍪 Headers:", req.headers.cookie);
+  console.log("🌐 Origin:", req.headers.origin);
+  console.log("🌐 Referer:", req.headers.referer);
+  console.log("🌐 Host:", req.headers.host);
+
+  const isCrossOrigin =
+    req.headers.origin &&
+    req.headers.origin !== `${req.protocol}://${req.headers.host}`;
+
+  res.json({
+    success: true,
+    cookies: req.cookies,
+    rawCookieHeader: req.headers.cookie,
+    hasAuthToken: !!req.cookies.authToken,
+    isCrossOrigin: isCrossOrigin,
+    environment: process.env.NODE_ENV,
+    origin: req.headers.origin,
+    host: req.headers.host,
+  });
+});
+
 // Get current authenticated user (requires authentication)
 router.get("/me", auth, usersController.getCurrentUser);
 

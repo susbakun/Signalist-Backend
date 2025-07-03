@@ -157,15 +157,26 @@ exports.registerUser = async (req, res) => {
       process.env.NODE_ENV === "production" &&
       (req.secure || req.headers["x-forwarded-proto"] === "https");
 
+    // For cross-origin requests (frontend on different domain), we need SameSite=None
+    const isProduction = process.env.NODE_ENV === "production";
+    const isCrossOrigin =
+      req.headers.origin &&
+      req.headers.origin !== `${req.protocol}://${req.headers.host}`;
+
     const cookieOptions = {
       httpOnly: true,
-      secure: isSecure, // Only secure if actually HTTPS
-      sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax", // Use lax instead of strict
+      secure: isSecure, // Required for SameSite=None
+      sameSite: isProduction && isCrossOrigin ? "none" : "lax", // Use "none" for cross-origin in production
       maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
       path: "/",
     };
 
     console.log("🍪 [REGISTER] Setting cookie with options:", cookieOptions);
+    console.log("🌍 [REGISTER] Is cross-origin request:", isCrossOrigin);
+    console.log(
+      "🔐 [REGISTER] Cookie sameSite setting:",
+      cookieOptions.sameSite
+    );
     res.cookie("authToken", token, cookieOptions);
 
     // Return user without password and token
@@ -191,12 +202,23 @@ exports.logoutUser = async (req, res) => {
       process.env.NODE_ENV === "production" &&
       (req.secure || req.headers["x-forwarded-proto"] === "https");
 
+    // For cross-origin requests, we need to match the original cookie settings
+    const isProduction = process.env.NODE_ENV === "production";
+    const isCrossOrigin =
+      req.headers.origin &&
+      req.headers.origin !== `${req.protocol}://${req.headers.host}`;
+
     res.clearCookie("authToken", {
       httpOnly: true,
       secure: isSecure,
-      sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax",
+      sameSite: isProduction && isCrossOrigin ? "none" : "lax",
       path: "/",
     });
+
+    console.log(
+      "🗑️ [LOGOUT] Clearing cookie with sameSite:",
+      isProduction && isCrossOrigin ? "none" : "lax"
+    );
 
     res.json({
       success: true,
@@ -253,14 +275,22 @@ exports.loginUser = async (req, res) => {
       process.env.NODE_ENV === "production" &&
       (req.secure || req.headers["x-forwarded-proto"] === "https");
 
+    // For cross-origin requests (frontend on different domain), we need SameSite=None
+    const isProduction = process.env.NODE_ENV === "production";
+    const isCrossOrigin =
+      req.headers.origin &&
+      req.headers.origin !== `${req.protocol}://${req.headers.host}`;
+
     const cookieOptions = {
       httpOnly: true,
-      secure: isSecure, // Only secure if actually HTTPS
-      sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax", // Use lax instead of strict
+      secure: isSecure, // Required for SameSite=None
+      sameSite: isProduction && isCrossOrigin ? "none" : "lax", // Use "none" for cross-origin in production
       maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
-      // Add domain and path for clarity
       path: "/",
     };
+
+    console.log("🌍 Is cross-origin request:", isCrossOrigin);
+    console.log("🔐 Cookie sameSite setting:", cookieOptions.sameSite);
 
     // If in production but not secure, add warning
     if (process.env.NODE_ENV === "production" && !isSecure) {
@@ -274,6 +304,8 @@ exports.loginUser = async (req, res) => {
     console.log("🌐 Request host:", req.headers.host);
     console.log("🌐 Request protocol:", req.protocol);
     console.log("🌐 Request secure:", req.secure);
+    console.log("🌐 Request origin:", req.headers.origin);
+    console.log("🌐 Request referer:", req.headers.referer);
     console.log("🌐 Environment:", process.env.NODE_ENV);
 
     res.cookie("authToken", token, cookieOptions);
