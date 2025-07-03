@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const multer = require("multer");
+const cookieParser = require("cookie-parser");
 const http = require("http");
 const usersRoutes = require("./routes/users.routes");
 const signalsRoutes = require("./routes/signals.routes");
@@ -14,6 +15,7 @@ const usersController = require("./controllers/users.controller");
 const signalsController = require("./controllers/signals.controller");
 const postsController = require("./controllers/posts.controller");
 const messagesController = require("./controllers/messages.controller");
+const auth = require("./middleware/auth");
 
 // Initialize Express app
 const app = express();
@@ -114,6 +116,7 @@ app.use(
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 app.use(morgan("dev"));
 
 // Make io instance available to all routes
@@ -138,25 +141,29 @@ app.use("/api/posts", postsRoutes);
 app.use("/api/news", newsRoutes);
 app.use("/api/messages", messagesRoutes);
 
-// Upload routes
+// Upload routes (all require authentication)
 app.post(
   "/api/upload/signals",
+  auth,
   upload.single("file"),
   signalsController.uploadImage
 );
 app.post(
   "/api/upload/posts",
+  auth,
   upload.single("file"),
   postsController.uploadImage
 );
 app.post(
   "/api/upload/users",
+  auth,
   upload.single("file"),
   usersController.uploadImage
 );
 
 app.post(
   "/api/upload/messages",
+  auth,
   upload.single("file"),
   messagesController.uploadImage
 );

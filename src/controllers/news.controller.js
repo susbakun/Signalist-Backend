@@ -2,9 +2,9 @@ const axios = require("axios");
 const crypto = require("crypto");
 const redisService = require("../services/redis.service");
 
-// CryptoPanic API configuration
-const CRYPTOPANIC_API_URL = "https://cryptopanic.com/api/developer/v2/posts/";
-const CRYPTOPANIC_API_KEY = process.env.CRYPTOPANIC_API_KEY;
+// CoinDesk API configuration
+const COINDESK_API_URL = "https://data-api.coindesk.com/news/v1/article/list";
+const COINDESK_API_KEY = process.env.COINDESK_API_KEY;
 const CACHE_TTL = 5 * 60; // 5 minutes cache
 
 // Helper function to generate cache key
@@ -16,31 +16,79 @@ const generateCacheKey = (params) => {
   return `news:${crypto.createHash("md5").update(sortedParams).digest("hex")}`;
 };
 
-// Get news from CryptoPanic
+// Transform CoinDesk response to match frontend expectations
+const transformCoinDeskData = (coinDeskData) => {
+  if (
+    !coinDeskData ||
+    !coinDeskData.Data ||
+    !Array.isArray(coinDeskData.Data)
+  ) {
+    return {
+      success: false,
+      message: "Invalid response format from CoinDesk API",
+      results: [],
+      count: 0,
+    };
+  }
+
+  const results = coinDeskData.Data.map((article) => ({
+    title: article.TITLE || "No Title",
+    url: article.URL || "#",
+    image_url: article.IMAGE_URL,
+    published_at: article.PUBLISHED_ON
+      ? new Date(article.PUBLISHED_ON * 1000).toISOString()
+      : new Date().toISOString(),
+    source: {
+      title: article.SOURCE_DATA?.NAME || "CoinDesk",
+    },
+    // Extract cryptocurrencies from categories if available
+    currencies: article.CATEGORY_DATA
+      ? article.CATEGORY_DATA.filter(
+          (cat) =>
+            cat.CATEGORY &&
+            cat.CATEGORY.length <= 5 &&
+            cat.CATEGORY.toUpperCase() === cat.CATEGORY
+        ).map((cat) => ({ code: cat.CATEGORY, title: cat.NAME }))
+      : [],
+    // Use subtitle or truncated body as description
+    description:
+      article.SUBTITLE ||
+      (article.BODY ? article.BODY.substring(0, 200) + "..." : ""),
+    body: article.BODY,
+  }));
+
+  return {
+    success: true,
+    results: results,
+    count: results.length,
+    next: null,
+    previous: null,
+  };
+};
+
+// Get news from CoinDesk
 exports.getNews = async (req, res) => {
   try {
-    // Build query parameters
+    // Build query parameters for CoinDesk API
     const params = {
-      auth_token: CRYPTOPANIC_API_KEY,
-      public: true,
+      lang: "EN",
+      limit: req.query.pageSize || 10,
+      api_key: COINDESK_API_KEY,
     };
 
-    // Add optional parameters if provided
-    if (req.query.filter) {
-      params.filter = req.query.filter;
-    }
-    if (req.query.currencies) {
-      params.currencies = req.query.currencies;
-    }
-    if (req.query.page) {
-      params.page = req.query.page;
+    // Add source IDs filter if provided
+    if (req.query.source_ids) {
+      params.source_ids = req.query.source_ids;
     }
 
-    // Log the API key and request parameters for debugging
-    console.log(
-      "Using CryptoPanic API key:",
-      CRYPTOPANIC_API_KEY ? "Key is set" : "Key is missing"
-    );
+    // Add pagination if provided (CoinDesk uses different pagination)
+    if (req.query.page && req.query.page > 1) {
+      // CoinDesk might use offset-based pagination
+      params.offset = (parseInt(req.query.page) - 1) * params.limit;
+    }
+
+    // Log the request parameters for debugging
+    console.log("Using CoinDesk API");
     console.log("Request parameters:", JSON.stringify(params));
 
     // Generate cache key based on the request params
@@ -53,66 +101,30 @@ exports.getNews = async (req, res) => {
       return res.json(JSON.parse(cachedData));
     }
 
-    // Fetch fresh data from CryptoPanic
-    console.log(
-      `Fetching fresh news data from CryptoPanic: ${CRYPTOPANIC_API_URL}`
-    );
+    // Fetch fresh data from CoinDesk
+    console.log(`Fetching fresh news data from CoinDesk: ${COINDESK_API_URL}`);
 
     try {
-      const response = await axios.get(CRYPTOPANIC_API_URL, { params });
-      console.log("Raw API response:", JSON.stringify(response.data, null, 2));
+      const response = await axios.get(COINDESK_API_URL, { params });
+      console.log(
+        "Raw CoinDesk API response:",
+        JSON.stringify(response.data, null, 2)
+      );
 
-      // Enrich with images using microlink if results exist
-      if (
-        response.data &&
-        response.data.results &&
-        response.data.results.length > 0
-      ) {
-        const enrichedResults = await Promise.all(
-          response.data.results.map(async (newsItem) => {
-            try {
-              // Try to fetch image URL from microlink
-              const microlinkResponse = await axios.get(
-                `https://api.microlink.io`,
-                {
-                  params: { url: newsItem.url },
-                }
-              );
+      // Transform the CoinDesk response to match our expected format
+      const transformedData = transformCoinDeskData(response.data);
 
-              // Add image URL if available
-              if (
-                microlinkResponse.data.data &&
-                microlinkResponse.data.data.image &&
-                microlinkResponse.data.data.image.url
-              ) {
-                return {
-                  ...newsItem,
-                  image_url: microlinkResponse.data.data.image.url,
-                };
-              }
-              return newsItem;
-            } catch (error) {
-              console.error("Error enriching news with image:", error.message);
-              return newsItem;
-            }
-          })
-        );
-
-        // Update the response with enriched results
-        response.data.results = enrichedResults;
-      }
-
-      // Cache the enriched data
+      // Cache the transformed data
       await redisService.set(
         cacheKey,
-        JSON.stringify(response.data),
+        JSON.stringify(transformedData),
         CACHE_TTL
       );
 
       // Return the results
-      res.json(response.data);
+      res.json(transformedData);
     } catch (error) {
-      console.error(`Error in CryptoPanic API request: ${error.message}`);
+      console.error(`Error in CoinDesk API request: ${error.message}`);
       if (error.response) {
         console.error(`Status: ${error.response.status}`);
         console.error(`Data: ${JSON.stringify(error.response.data || {})}`);
@@ -124,7 +136,7 @@ exports.getNews = async (req, res) => {
       // Return a more specific error
       res.status(500).json({
         success: false,
-        message: "Error fetching news data from external API",
+        message: "Error fetching news data from CoinDesk API",
         error: error.message,
         status: error.response ? error.response.status : null,
       });

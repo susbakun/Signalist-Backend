@@ -1,11 +1,15 @@
 const express = require("express");
 const router = express.Router();
 const usersController = require("../controllers/users.controller");
+const auth = require("../middleware/auth");
 
 // Get all users
 router.get("/", usersController.getAllUsers);
 
-// Get user by username
+// Get current authenticated user (requires authentication) - MUST come before /:username
+router.get("/me", auth, usersController.getCurrentUser);
+
+// Get user by username - MUST come after specific routes
 router.get("/:username", usersController.getUserByUsername);
 
 // Register new user
@@ -14,25 +18,28 @@ router.post("/register", usersController.registerUser);
 // Login user
 router.post("/login", usersController.loginUser);
 
-// Follow user
-router.post("/:followerUsername/follow", usersController.followUser);
+// Logout user
+router.post("/logout", usersController.logoutUser);
 
-// Unfollow user
-router.post("/:followerUsername/unfollow", usersController.unfollowUser);
+// Follow user (requires authentication)
+router.post("/:followerUsername/follow", auth, usersController.followUser);
 
-// Block user
-router.post("/:blockerUsername/block", usersController.blockUser);
+// Unfollow user (requires authentication)
+router.post("/:followerUsername/unfollow", auth, usersController.unfollowUser);
 
-// Unblock user
-router.post("/:blockerUsername/unblock", usersController.unblockUser);
+// Block user (requires authentication)
+router.post("/:blockerUsername/block", auth, usersController.blockUser);
 
-// Update bookmarks
-router.put("/:username/bookmarks", usersController.updateBookmarks);
+// Unblock user (requires authentication)
+router.post("/:blockerUsername/unblock", auth, usersController.unblockUser);
 
-// Update profile
-router.put("/:username", usersController.updateProfile);
+// Update bookmarks (requires authentication)
+router.put("/:username/bookmarks", auth, usersController.updateBookmarks);
 
-// Update user score based on signal targets
-router.put("/:username/score", usersController.updateUserScore);
+// Update profile (requires authentication)
+router.put("/:username", auth, usersController.updateProfile);
+
+// Update user score based on signal targets (requires authentication)
+router.put("/:username/score", auth, usersController.updateUserScore);
 
 module.exports = router;

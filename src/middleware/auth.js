@@ -1,30 +1,53 @@
+const jwt = require("jsonwebtoken");
+
 /**
- * Simple authentication middleware.
- * In a real-world app, this would verify token, check user sessions, etc.
- * For this implementation, we'll keep it simple.
+ * Authentication middleware that validates JWT tokens from cookies
  */
 const auth = (req, res, next) => {
-  // In a real application, you would verify JWT tokens here
-  // For simplicity, we're allowing all requests through
+  try {
+    // Get token from cookies instead of Authorization header
+    const token = req.cookies.authToken;
 
-  // Extract authorization headers if present
-  const authHeader = req.headers.authorization;
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: "No authentication token found",
+      });
+    }
 
-  if (authHeader) {
-    const token = authHeader.split(" ")[1]; // Extract token from "Bearer TOKEN"
+    // Verify the JWT token
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || "your-secret-key"
+    );
 
-    // Here you would validate the token
-    // For example: jwt.verify(token, process.env.JWT_SECRET);
+    // Add user info to request object
+    req.user = decoded;
 
-    // For now, just log that we received a token
-    console.log("Auth token received:", token.substring(0, 10) + "...");
-  } else {
-    // Allow anonymous access for now (in development)
-    console.log("No auth token provided, allowing anonymous access");
+    console.log(`User authenticated: ${decoded.id}`);
+    next();
+  } catch (error) {
+    console.error("Auth error:", error.message);
+
+    if (error.name === "JsonWebTokenError") {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid authentication token",
+      });
+    }
+
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication token has expired",
+      });
+    }
+
+    return res.status(401).json({
+      success: false,
+      message: "Authentication failed",
+    });
   }
-
-  // Continue with the request
-  next();
 };
 
 module.exports = auth;

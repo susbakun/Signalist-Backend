@@ -151,18 +151,48 @@ exports.registerUser = async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    // Return user without password
+    // Set token as HTTP-only cookie
+    res.cookie("authToken", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax", // More permissive in development
+      maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
+    });
+
+    // Return user without password and token
     const { password: _, ...safeUser } = newUser;
     res.status(201).json({
       success: true,
       user: safeUser,
-      token,
     });
   } catch (error) {
     console.error("Error registering user:", error);
     res.status(500).json({
       success: false,
       message: `Error creating user: ${error.message || "Unknown error"}`,
+    });
+  }
+};
+
+// Logout user
+exports.logoutUser = async (req, res) => {
+  try {
+    // Clear the authentication cookie
+    res.clearCookie("authToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+    });
+
+    res.json({
+      success: true,
+      message: "Logged out successfully",
+    });
+  } catch (error) {
+    console.error("Error logging out user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error logging out",
     });
   }
 };
@@ -205,12 +235,25 @@ exports.loginUser = async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    // Return user without password
+    // Set token as HTTP-only cookie
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax", // More permissive in development
+      maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
+    };
+
+    console.log("🍪 Setting cookie with options:", cookieOptions);
+    console.log("🎫 Token being set:", token.substring(0, 20) + "...");
+
+    res.cookie("authToken", token, cookieOptions);
+
+    // Return user without password and token
     const { password: _, ...safeUser } = user;
+    console.log("✅ Login successful for user:", safeUser.username);
     res.json({
       success: true,
       user: safeUser,
-      token,
     });
   } catch (error) {
     console.error("Error logging in user:", error);
@@ -868,6 +911,42 @@ exports.updateUserScore = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating user score",
+    });
+  }
+};
+
+// Check authentication status and return current user
+exports.getCurrentUser = async (req, res) => {
+  try {
+    // req.user is set by the auth middleware
+    const username = req.user.id;
+    const user = await findUserByUsername(username);
+    console.log(
+      "👤 User found:",
+      !!user,
+      user ? `User: ${user.username}` : "No user"
+    );
+
+    if (!user) {
+      console.log("❌ User not found in database");
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Return user without password
+    const { password: _, ...safeUser } = user;
+    console.log("✅ Returning user data for:", safeUser.username);
+    res.json({
+      success: true,
+      user: safeUser,
+    });
+  } catch (error) {
+    console.error("❌ Error getting current user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving current user",
     });
   }
 };

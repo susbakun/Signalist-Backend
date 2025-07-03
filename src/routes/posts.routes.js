@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { v4: uuidv4 } = require("uuid");
 const redisService = require("../services/redis.service");
+const auth = require("../middleware/auth");
 
 // Helper function to get post by ID
 async function getPostById(id) {
@@ -66,8 +67,8 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Create a new post
-router.post("/", async (req, res) => {
+// Create a new post (requires authentication)
+router.post("/", auth, async (req, res) => {
   try {
     const { content, publisher, isPremium, postImageHref } = req.body;
 
@@ -110,8 +111,8 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Edit a post
-router.put("/:id", async (req, res) => {
+// Edit a post (requires authentication)
+router.put("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { content, postImageHref, removePostImage } = req.body;
@@ -161,8 +162,8 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Remove a post
-router.delete("/:id", async (req, res) => {
+// Remove a post (requires authentication)
+router.delete("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
     const exists = await redisService.exists(`post:${id}`);
@@ -190,8 +191,8 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// Like a post
-router.post("/:id/like", async (req, res) => {
+// Like a post (requires authentication)
+router.post("/:id/like", auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { user } = req.body;
@@ -238,8 +239,8 @@ router.post("/:id/like", async (req, res) => {
   }
 });
 
-// Dislike a post
-router.post("/:id/dislike", async (req, res) => {
+// Dislike a post (requires authentication)
+router.post("/:id/dislike", auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { user } = req.body;
@@ -279,8 +280,8 @@ router.post("/:id/dislike", async (req, res) => {
   }
 });
 
-// Add a comment to a post
-router.post("/:id/comments", async (req, res) => {
+// Add a comment to a post (requires authentication)
+router.post("/:id/comments", auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { body, publisher } = req.body;
@@ -328,8 +329,8 @@ router.post("/:id/comments", async (req, res) => {
   }
 });
 
-// Delete a comment
-router.delete("/:id/comments/:commentId", async (req, res) => {
+// Delete a comment (requires authentication)
+router.delete("/:id/comments/:commentId", auth, async (req, res) => {
   try {
     const { id, commentId } = req.params;
 
@@ -371,8 +372,8 @@ router.delete("/:id/comments/:commentId", async (req, res) => {
   }
 });
 
-// Like a comment
-router.post("/:id/comments/:commentId/like", async (req, res) => {
+// Like a comment (requires authentication)
+router.post("/:id/comments/:commentId/like", auth, async (req, res) => {
   try {
     const { id, commentId } = req.params;
     const { user } = req.body;
@@ -435,8 +436,8 @@ router.post("/:id/comments/:commentId/like", async (req, res) => {
   }
 });
 
-// Dislike a comment
-router.post("/:id/comments/:commentId/dislike", async (req, res) => {
+// Dislike a comment (requires authentication)
+router.post("/:id/comments/:commentId/dislike", auth, async (req, res) => {
   try {
     const { id, commentId } = req.params;
     const { user } = req.body;
