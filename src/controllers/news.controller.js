@@ -2,7 +2,6 @@ const axios = require("axios");
 const crypto = require("crypto");
 const redisService = require("../services/redis.service");
 
-// CoinDesk API configuration
 const COINDESK_API_URL = "https://data-api.coindesk.com/news/v1/article/list";
 const COINDESK_API_KEY = process.env.COINDESK_API_KEY;
 const CACHE_TTL = 5 * 60; // 5 minutes cache
