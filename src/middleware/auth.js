@@ -16,10 +16,7 @@ const auth = (req, res, next) => {
     }
 
     // Verify the JWT token
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || "your-secret-key"
-    );
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Add user info to request object
     req.user = decoded;

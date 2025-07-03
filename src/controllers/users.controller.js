@@ -145,17 +145,14 @@ exports.registerUser = async (req, res) => {
     await redisService.set(`user:${username}`, JSON.stringify(newUser));
 
     // Create token
-    const token = jwt.sign(
-      { id: username },
-      process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "1d" }
-    );
+    const token = jwt.sign({ id: username }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
 
     // Set token as HTTP-only cookie
     res.cookie("authToken", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
-      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax", // More permissive in development
       maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
     });
 
@@ -229,11 +226,9 @@ exports.loginUser = async (req, res) => {
     }
 
     // Create token
-    const token = jwt.sign(
-      { id: user.username },
-      process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "1d" }
-    );
+    const token = jwt.sign({ id: user.username }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
 
     // Set token as HTTP-only cookie
     const cookieOptions = {
