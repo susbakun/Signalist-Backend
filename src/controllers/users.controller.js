@@ -148,7 +148,7 @@ exports.registerUser = async (req, res) => {
     const token = jwt.sign(
       { id: username },
       process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "1d" }
+      { expiresIn: "7d" }
     );
 
     // Set token as HTTP-only cookie
@@ -266,7 +266,7 @@ exports.loginUser = async (req, res) => {
 
     // Create token
     const token = jwt.sign({ id: user.username }, process.env.JWT_SECRET, {
-      expiresIn: "1d",
+      expiresIn: "7d",
     });
 
     // Set token as HTTP-only cookie

@@ -105,10 +105,6 @@ exports.getNews = async (req, res) => {
 
     try {
       const response = await axios.get(COINDESK_API_URL, { params });
-      console.log(
-        "Raw CoinDesk API response:",
-        JSON.stringify(response.data, null, 2)
-      );
 
       // Transform the CoinDesk response to match our expected format
       const transformedData = transformCoinDeskData(response.data);

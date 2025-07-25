@@ -18,11 +18,14 @@ async function getPostFromRedis(postId) {
 }
 
 // Get all posts
+// TODO: we need to add a new field to the post model to store the tag name
+// and then we can use it to filter the posts by tag name
 exports.getPosts = async (req, res) => {
   try {
     // Extract pagination parameters from query
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
+    const tagName = req.query.tagName || "";
 
     const postKeys = await redisService.keys("post:*");
     const allPosts = await Promise.all(
