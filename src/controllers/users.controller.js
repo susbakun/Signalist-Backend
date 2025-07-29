@@ -167,7 +167,7 @@ exports.registerUser = async (req, res) => {
       httpOnly: true,
       secure: isSecure, // Required for SameSite=None
       sameSite: isProduction && isCrossOrigin ? "none" : "lax", // Use "none" for cross-origin in production
-      maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week in milliseconds
       path: "/",
     };
 
@@ -285,7 +285,7 @@ exports.loginUser = async (req, res) => {
       httpOnly: true,
       secure: isSecure, // Required for SameSite=None
       sameSite: isProduction && isCrossOrigin ? "none" : "lax", // Use "none" for cross-origin in production
-      maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week in milliseconds
       path: "/",
     };
 
