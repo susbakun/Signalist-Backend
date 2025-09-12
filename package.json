@@ -4,8 +4,11 @@
   "description": "Express.js backend for Signalist frontend application",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "npx prisma generate && npx prisma db push --accept-data-loss && node src/index.js",
     "dev": "nodemon src/index.js",
+    "build": "npx prisma generate",
+    "postinstall": "npx prisma generate",
+    "deploy": "npx prisma db push --accept-data-loss && node src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "cleanup:redis": "node src/scripts/cleanup-redis-dependencies.js",
     "migrate:redis-to-postgres": "node src/scripts/migrate-redis-to-postgres.js",
