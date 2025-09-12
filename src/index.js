@@ -10,12 +10,14 @@ const signalsRoutes = require("./routes/signals.routes");
 const postsRoutes = require("./routes/posts.routes");
 const newsRoutes = require("./routes/news.routes");
 const messagesRoutes = require("./routes/messages.routes");
+const cryptoRoutes = require("./routes/crypto.routes");
 
 const usersController = require("./controllers/users.controller");
 const signalsController = require("./controllers/signals.controller");
 const postsController = require("./controllers/posts.controller");
 const messagesController = require("./controllers/messages.controller");
 const auth = require("./middleware/auth");
+const bigIntSerializationMiddleware = require("./middleware/bigint-serialization");
 
 // Initialize Express app
 const app = express();
@@ -127,6 +129,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 
+// BigInt serialization middleware - handles BigInt values in JSON responses
+app.use(bigIntSerializationMiddleware);
+
 // Make io instance available to all routes
 app.use((req, res, next) => {
   req.io = io;
@@ -148,6 +153,7 @@ app.use("/api/signals", signalsRoutes);
 app.use("/api/posts", postsRoutes);
 app.use("/api/news", newsRoutes);
 app.use("/api/messages", messagesRoutes);
+app.use("/api/crypto", cryptoRoutes);
 
 // Upload routes (all require authentication)
 app.post(

@@ -22,7 +22,6 @@ const auth = (req, res, next) => {
     // Add user info to request object
     req.user = decoded;
 
-    console.log(`User authenticated: ${decoded.id}`);
     next();
   } catch (error) {
     console.error("Auth error:", error.message);

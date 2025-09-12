@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require("uuid");
-const redisService = require("../services/redis.service");
+const databaseService = require("../services/database.service");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 
 const s3Client = new S3Client({
@@ -12,9 +12,8 @@ const s3Client = new S3Client({
 });
 
 // Helper function to get post by ID
-async function getPostFromRedis(postId) {
-  const post = await redisService.get(`post:${postId}`);
-  return post ? JSON.parse(post) : null;
+async function getPostById(postId) {
+  return await databaseService.getPost(postId);
 }
 
 // Get all posts
@@ -26,17 +25,28 @@ exports.getPosts = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const tagName = req.query.tagName || "";
+    const publishersCsv = req.query.publishers;
+    const publishers =
+      typeof publishersCsv === "string" && publishersCsv.length
+        ? publishersCsv
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : null;
 
-    const postKeys = await redisService.keys("post:*");
-    const allPosts = await Promise.all(
-      postKeys.map(async (key) => {
-        const post = await redisService.get(key);
-        return JSON.parse(post);
-      })
-    );
+    // Use the new PostgreSQL database service
+    let allPosts = await databaseService.getAllPosts();
 
-    // Sort posts by date (newest first)
-    allPosts.sort((a, b) => new Date(b.date) - new Date(a.date));
+    // Optional filter by publishers
+    if (Array.isArray(publishers) && publishers.length > 0) {
+      const allow = new Set(publishers);
+      allPosts = allPosts.filter(
+        (p) => p?.publisher?.username && allow.has(p.publisher.username)
+      );
+    }
+
+    // Sort posts by date (newest first) - handle BigInt dates
+    allPosts.sort((a, b) => Number(b.date) - Number(a.date));
 
     // Implement pagination
     const startIndex = (page - 1) * limit;
@@ -60,7 +70,7 @@ exports.getPosts = async (req, res) => {
 // Get a single post by ID
 exports.getPostById = async (req, res) => {
   try {
-    const post = await getPostFromRedis(req.params.id);
+    const post = await getPostById(req.params.id);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
@@ -86,8 +96,14 @@ exports.createPost = async (req, res) => {
       dislikes: [],
       comments: [],
     };
-    await redisService.set(`post:${newPost.id}`, JSON.stringify(newPost));
-    res.status(201).json({ data: newPost });
+    // Use the new PostgreSQL createPost method
+    const createdPost = await databaseService.createPost({
+      content,
+      isPremium: isPremium || false,
+      postImageHref: postImageHref || null,
+      publisher: publisher,
+    });
+    res.status(201).json({ data: createdPost });
   } catch (error) {
     console.error("Error creating post:", error);
     res.status(500).json({ message: "Error creating post" });
@@ -97,22 +113,21 @@ exports.createPost = async (req, res) => {
 // Update a post
 exports.updatePost = async (req, res) => {
   try {
-    const post = await getPostFromRedis(req.params.id);
+    const post = await getPostById(req.params.id);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
 
     const { content, postImageHref, removePostImage } = req.body;
-    post.content = content;
 
-    if (removePostImage) {
-      delete post.postImageHref;
-    } else if (postImageHref) {
-      post.postImageHref = postImageHref;
-    }
-
-    await redisService.set(`post:${post.id}`, JSON.stringify(post));
-    res.json({ data: post });
+    // Use the new PostgreSQL updatePost method
+    const updatedPost = await databaseService.updatePost(post.id, {
+      content,
+      postImageHref: removePostImage
+        ? null
+        : postImageHref || post.postImageHref,
+    });
+    res.json({ data: updatedPost });
   } catch (error) {
     console.error("Error updating post:", error);
     res.status(500).json({ message: "Error updating post" });
@@ -122,11 +137,11 @@ exports.updatePost = async (req, res) => {
 // Delete a post
 exports.deletePost = async (req, res) => {
   try {
-    const exists = await redisService.exists(`post:${req.params.id}`);
-    if (!exists) {
+    const post = await getPostById(req.params.id);
+    if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
-    await redisService.del(`post:${req.params.id}`);
+    await databaseService.deletePost(req.params.id);
     res.status(204).send();
   } catch (error) {
     console.error("Error deleting post:", error);
@@ -137,7 +152,7 @@ exports.deletePost = async (req, res) => {
 // Like a post
 exports.likePost = async (req, res) => {
   try {
-    const post = await getPostFromRedis(req.params.id);
+    const post = await getPostById(req.params.id);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
@@ -151,8 +166,11 @@ exports.likePost = async (req, res) => {
       post.dislikes = post.dislikes.filter((u) => u.username !== user.username);
     }
 
-    await redisService.set(`post:${post.id}`, JSON.stringify(post));
-    res.json({ data: post });
+    // Use the new PostgreSQL updatePost method
+    const updatedPost = await databaseService.updatePost(post.id, {
+      likes: post.likes,
+    });
+    res.json({ data: updatedPost });
   } catch (error) {
     console.error("Error liking post:", error);
     res.status(500).json({ message: "Error liking post" });
@@ -162,7 +180,7 @@ exports.likePost = async (req, res) => {
 // Dislike a post
 exports.dislikePost = async (req, res) => {
   try {
-    const post = await getPostFromRedis(req.params.id);
+    const post = await getPostById(req.params.id);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
@@ -178,8 +196,11 @@ exports.dislikePost = async (req, res) => {
       post.likes = post.likes.filter((u) => u.username !== user.username);
     }
 
-    await redisService.set(`post:${post.id}`, JSON.stringify(post));
-    res.json({ data: post });
+    // Use the new PostgreSQL updatePost method
+    const updatedPost = await databaseService.updatePost(post.id, {
+      likes: post.likes,
+    });
+    res.json({ data: updatedPost });
   } catch (error) {
     console.error("Error disliking post:", error);
     res.status(500).json({ message: "Error disliking post" });
@@ -205,7 +226,7 @@ exports.addComment = async (req, res) => {
     };
 
     post.comments.push(newComment);
-    await redisService.set(`post:${post.id}`, JSON.stringify(post));
+    await databaseService.set(`post:${post.id}`, JSON.stringify(post));
     res.status(201).json({ data: newComment });
   } catch (error) {
     console.error("Error adding comment:", error);
@@ -216,7 +237,7 @@ exports.addComment = async (req, res) => {
 // Delete a comment
 exports.deleteComment = async (req, res) => {
   try {
-    const post = await getPostFromRedis(req.params.postId);
+    const post = await getPostById(req.params.postId);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
@@ -229,7 +250,10 @@ exports.deleteComment = async (req, res) => {
     }
 
     post.comments.splice(commentIndex, 1);
-    await redisService.set(`post:${post.id}`, JSON.stringify(post));
+    // Use the new PostgreSQL updatePost method
+    await databaseService.updatePost(post.id, {
+      comments: post.comments,
+    });
     res.status(204).send();
   } catch (error) {
     console.error("Error deleting comment:", error);
@@ -240,7 +264,7 @@ exports.deleteComment = async (req, res) => {
 // Like a comment
 exports.likeComment = async (req, res) => {
   try {
-    const post = await getPostFromRedis(req.params.postId);
+    const post = await getPostById(req.params.postId);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
@@ -265,7 +289,10 @@ exports.likeComment = async (req, res) => {
       );
     }
 
-    await redisService.set(`post:${post.id}`, JSON.stringify(post));
+    // Use the new PostgreSQL updatePost method
+    const updatedPost = await databaseService.updatePost(post.id, {
+      comments: post.comments,
+    });
     res.json({ data: comment });
   } catch (error) {
     console.error("Error liking comment:", error);
@@ -276,7 +303,7 @@ exports.likeComment = async (req, res) => {
 // Dislike a comment
 exports.dislikeComment = async (req, res) => {
   try {
-    const post = await getPostFromRedis(req.params.postId);
+    const post = await getPostById(req.params.postId);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
@@ -299,7 +326,10 @@ exports.dislikeComment = async (req, res) => {
       comment.likes = comment.likes.filter((u) => u.username !== user.username);
     }
 
-    await redisService.set(`post:${post.id}`, JSON.stringify(post));
+    // Use the new PostgreSQL updatePost method
+    const updatedPost = await databaseService.updatePost(post.id, {
+      comments: post.comments,
+    });
     res.json({ data: comment });
   } catch (error) {
     console.error("Error disliking comment:", error);

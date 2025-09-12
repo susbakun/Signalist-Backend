@@ -1,6 +1,6 @@
 const axios = require("axios");
 const crypto = require("crypto");
-const redisService = require("../services/redis.service");
+const databaseService = require("../services/database.service");
 
 const COINDESK_API_URL = "https://data-api.coindesk.com/news/v1/article/list";
 const COINDESK_API_KEY = process.env.COINDESK_API_KEY;
@@ -86,15 +86,11 @@ exports.getNews = async (req, res) => {
       params.offset = (parseInt(req.query.page) - 1) * params.limit;
     }
 
-    // Log the request parameters for debugging
-    console.log("Using CoinDesk API");
-    console.log("Request parameters:", JSON.stringify(params));
-
     // Generate cache key based on the request params
     const cacheKey = generateCacheKey(params);
 
     // Try to get cached data first
-    const cachedData = await redisService.get(cacheKey);
+    const cachedData = await databaseService.get(cacheKey);
     if (cachedData) {
       console.log("Returning cached news data");
       return res.json(JSON.parse(cachedData));
@@ -110,7 +106,7 @@ exports.getNews = async (req, res) => {
       const transformedData = transformCoinDeskData(response.data);
 
       // Cache the transformed data
-      await redisService.set(
+      await databaseService.set(
         cacheKey,
         JSON.stringify(transformedData),
         CACHE_TTL

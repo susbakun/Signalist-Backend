@@ -8,6 +8,9 @@ const upload = multer();
 // Get all signals
 router.get("/", signalsController.getSignals);
 
+// Get top signals in a timeframe
+router.get("/top", signalsController.getTopSignals);
+
 // Get a single signal by ID
 router.get("/:id", signalsController.getSignalById);
 
@@ -36,5 +39,8 @@ router.post(
   upload.single("file"),
   signalsController.uploadImage
 );
+
+// Calculate reward for a hypothetical trade (public endpoint)
+router.post("/reward", signalsController.calculateReward);
 
 module.exports = router;

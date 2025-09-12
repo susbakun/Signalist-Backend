@@ -2,7 +2,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-const redisService = require("../services/redis.service");
+const databaseService = require("../services/database.service");
 
 // Set up S3 client for Liara Object Storage
 const s3Client = new S3Client({
@@ -14,29 +14,20 @@ const s3Client = new S3Client({
   },
 });
 
-// Helper to find user by username from Redis
+// Helper to find user by username from database
 const findUserByUsername = async (username) => {
   try {
-    const userJson = await redisService.get(`user:${username}`);
-    return userJson ? JSON.parse(userJson) : null;
+    return await databaseService.getUser(username);
   } catch (error) {
     console.error(`Error finding user ${username}:`, error);
     return null;
   }
 };
 
-// Helper to find user by email from Redis
+// Helper to find user by email from database
 const findUserByEmail = async (email) => {
   try {
-    const usersKeys = await redisService.keys("user:*");
-    for (const key of usersKeys) {
-      const userJson = await redisService.get(key);
-      const user = JSON.parse(userJson);
-      if (user.email === email) {
-        return user;
-      }
-    }
-    return null;
+    return await databaseService.getUserByEmail(email);
   } catch (error) {
     console.error(`Error finding user with email ${email}:`, error);
     return null;
@@ -46,20 +37,13 @@ const findUserByEmail = async (email) => {
 // Get all users
 exports.getAllUsers = async (req, res) => {
   try {
-    const userKeys = await redisService.keys("user:*");
-    const users = [];
-
-    for (const key of userKeys) {
-      const userJson = await redisService.get(key);
-      if (userJson) {
-        const user = JSON.parse(userJson);
-        // Remove sensitive information
-        const { password, ...safeUser } = user;
-        users.push(safeUser);
-      }
-    }
-
-    res.json(users);
+    const users = await databaseService.getAllUsers();
+    // Remove sensitive information
+    const safeUsers = users.map((user) => {
+      const { password, ...safeUser } = user;
+      return safeUser;
+    });
+    res.json(safeUsers);
   } catch (error) {
     console.error("Error getting all users:", error);
     res.status(500).json({ message: "Error retrieving users" });
@@ -142,7 +126,7 @@ exports.registerUser = async (req, res) => {
     };
 
     // Save to Redis
-    await redisService.set(`user:${username}`, JSON.stringify(newUser));
+    await databaseService.set(`user:${username}`, newUser);
 
     // Create token
     const token = jwt.sign(
@@ -340,58 +324,28 @@ exports.followUser = async (req, res) => {
   }
 
   try {
-    // Find users
-    const follower = await findUserByUsername(followerUsername);
-    const following = await findUserByUsername(followingUsername);
-
-    if (!follower || !following) {
-      return res.status(404).json({
-        success: false,
-        message: "One or both users not found",
-      });
-    }
-
-    // Check if already following
-    const isAlreadyFollowing = follower.followings.some(
-      (user) => user.username === followingUsername
+    // Use the new database service method
+    const follow = await databaseService.followUser(
+      followerUsername,
+      followingUsername
     );
 
-    if (isAlreadyFollowing) {
-      return res.status(400).json({
-        success: false,
-        message: "Already following this user",
-      });
-    }
-
-    // Add following to follower
-    follower.followings.push({
-      name: following.name,
-      username: following.username,
-      imageUrl: following.imageUrl,
-    });
-
-    // Add follower to following
-    following.followers.push({
-      name: follower.name,
-      username: follower.username,
-      imageUrl: follower.imageUrl,
-    });
-
-    // Save updated users to Redis
-    await redisService.set(
-      `user:${followerUsername}`,
-      JSON.stringify(follower)
-    );
-    await redisService.set(
-      `user:${followingUsername}`,
-      JSON.stringify(following)
-    );
+    // Get the updated follower user with relationships
+    const updatedFollower = await databaseService.getUser(followerUsername);
 
     // Return updated follower
-    const { password: _, ...safeUser } = follower;
+    const { password: _, ...safeUser } = updatedFollower;
     res.json(safeUser);
   } catch (error) {
     console.error("Error following user:", error);
+
+    if (error.message === "Already following this user") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Error following user",
@@ -413,53 +367,25 @@ exports.unfollowUser = async (req, res) => {
   }
 
   try {
-    // Find users
-    const follower = await findUserByUsername(followerUsername);
-    const following = await findUserByUsername(followingUsername);
+    // Use the new database service method
+    await databaseService.unfollowUser(followerUsername, followingUsername);
 
-    if (!follower || !following) {
-      return res.status(404).json({
-        success: false,
-        message: "One or both users not found",
-      });
-    }
-
-    // Check if following
-    const followingIndex = follower.followings.findIndex(
-      (user) => user.username === followingUsername
-    );
-
-    if (followingIndex === -1) {
-      return res.status(400).json({
-        success: false,
-        message: "Not following this user",
-      });
-    }
-
-    // Remove following from follower
-    follower.followings.splice(followingIndex, 1);
-
-    // Remove follower from following
-    const followerIndex = following.followers.findIndex(
-      (user) => user.username === followerUsername
-    );
-    following.followers.splice(followerIndex, 1);
-
-    // Save updated users to Redis
-    await redisService.set(
-      `user:${followerUsername}`,
-      JSON.stringify(follower)
-    );
-    await redisService.set(
-      `user:${followingUsername}`,
-      JSON.stringify(following)
-    );
+    // Get the updated follower user with relationships
+    const updatedFollower = await databaseService.getUser(followerUsername);
 
     // Return updated follower
-    const { password: _, ...safeUser } = follower;
+    const { password: _, ...safeUser } = updatedFollower;
     res.json(safeUser);
   } catch (error) {
     console.error("Error unfollowing user:", error);
+
+    if (error.message === "Not following this user") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Error unfollowing user",
@@ -481,62 +407,21 @@ exports.blockUser = async (req, res) => {
   }
 
   try {
-    // Find users
-    const blocker = await findUserByUsername(blockerUsername);
-    const blocked = await findUserByUsername(blockedUsername);
-
-    if (!blocker || !blocked) {
-      return res.status(404).json({
-        success: false,
-        message: "One or both users not found",
-      });
-    }
-
-    // Check if already blocked
-    const isAlreadyBlocked = blocker.blockedAccounts.some(
-      (user) => user.username === blockedUsername
+    // Use the new PostgreSQL database service
+    const result = await databaseService.blockUser(
+      blockerUsername,
+      blockedUsername
     );
 
-    if (isAlreadyBlocked) {
+    if (!result.success) {
       return res.status(400).json({
         success: false,
-        message: "User is already blocked",
+        message: result.message,
       });
     }
 
-    // Add to blocked accounts
-    blocker.blockedAccounts.push({
-      name: blocked.name,
-      username: blocked.username,
-      imageUrl: blocked.imageUrl,
-    });
-
-    // Remove blocked user from blocker's followings
-    blocker.followings = blocker.followings.filter(
-      (user) => user.username !== blockedUsername
-    );
-
-    // Remove blocked user from blocker's followers
-    blocker.followers = blocker.followers.filter(
-      (user) => user.username !== blockedUsername
-    );
-
-    // Remove blocker from blocked user's followings
-    blocked.followings = blocked.followings.filter(
-      (user) => user.username !== blockerUsername
-    );
-
-    // Remove blocker from blocked user's followers
-    blocked.followers = blocked.followers.filter(
-      (user) => user.username !== blockerUsername
-    );
-
-    // Save updated users to Redis
-    await redisService.set(`user:${blockerUsername}`, JSON.stringify(blocker));
-    await redisService.set(`user:${blockedUsername}`, JSON.stringify(blocked));
-
     // Return updated user
-    const { password: _, ...safeUser } = blocker;
+    const { password: _, ...safeUser } = result.user;
     res.json(safeUser);
   } catch (error) {
     console.error("Error blocking user:", error);
@@ -561,38 +446,21 @@ exports.unblockUser = async (req, res) => {
   }
 
   try {
-    // Find blocker user
-    const blocker = await findUserByUsername(blockerUsername);
-
-    if (!blocker) {
-      return res.status(404).json({
-        success: false,
-        message: "Blocker user not found",
-      });
-    }
-
-    // Check if user is actually blocked
-    const isBlocked = blocker.blockedAccounts.some(
-      (user) => user.username === blockedUsername
+    // Use the new PostgreSQL database service
+    const result = await databaseService.unblockUser(
+      blockerUsername,
+      blockedUsername
     );
 
-    if (!isBlocked) {
+    if (!result.success) {
       return res.status(400).json({
         success: false,
-        message: "User is not blocked",
+        message: result.message,
       });
     }
 
-    // Remove from blocked accounts
-    blocker.blockedAccounts = blocker.blockedAccounts.filter(
-      (user) => user.username !== blockedUsername
-    );
-
-    // Save updated user to Redis
-    await redisService.set(`user:${blockerUsername}`, JSON.stringify(blocker));
-
     // Return updated user
-    const { password: _, ...safeUser } = blocker;
+    const { password: _, ...safeUser } = result.user;
     res.json(safeUser);
   } catch (error) {
     console.error("Error unblocking user:", error);
@@ -627,14 +495,48 @@ exports.updateBookmarks = async (req, res) => {
       });
     }
 
-    // Update bookmarks
-    user.bookmarks = bookmarks;
+    // Get current bookmarks from database
+    const currentBookmarks = await databaseService.getUserBookmarks(user.id);
 
-    // Save updated user to Redis
-    await redisService.set(`user:${username}`, JSON.stringify(user));
+    // Handle post bookmarks
+    if (bookmarks.posts) {
+      // Add new post bookmarks
+      for (const postId of bookmarks.posts) {
+        if (!currentBookmarks.posts.includes(postId)) {
+          await databaseService.addPostBookmark(postId, user.id);
+        }
+      }
+
+      // Remove bookmarks that are no longer in the list
+      for (const postId of currentBookmarks.posts) {
+        if (!bookmarks.posts.includes(postId)) {
+          await databaseService.removePostBookmark(postId, user.id);
+        }
+      }
+    }
+
+    // Handle signal bookmarks
+    if (bookmarks.signals) {
+      // Add new signal bookmarks
+      for (const signalId of bookmarks.signals) {
+        if (!currentBookmarks.signals.includes(signalId)) {
+          await databaseService.addSignalBookmark(signalId, user.id);
+        }
+      }
+
+      // Remove bookmarks that are no longer in the list
+      for (const signalId of currentBookmarks.signals) {
+        if (!bookmarks.signals.includes(signalId)) {
+          await databaseService.removeSignalBookmark(signalId, user.id);
+        }
+      }
+    }
+
+    // Get updated user with new bookmarks
+    const updatedUser = await databaseService.getUser(username);
 
     // Return updated user
-    const { password: _, ...safeUser } = user;
+    const { password: _, ...safeUser } = updatedUser;
     res.json(safeUser);
   } catch (error) {
     console.error("Error updating bookmarks:", error);
@@ -659,8 +561,8 @@ exports.updateProfile = async (req, res) => {
   }
 
   try {
-    // Find user
-    const user = await findUserByUsername(username);
+    // Find user using the new database service
+    const user = await databaseService.getUser(username);
 
     if (!user) {
       return res.status(404).json({
@@ -671,21 +573,22 @@ exports.updateProfile = async (req, res) => {
 
     // Handle email update - check if it's already in use
     if (updates.email && updates.email !== user.email) {
-      const existingEmail = await findUserByEmail(updates.email);
-      if (existingEmail && existingEmail.username !== username) {
+      const existingUser = await databaseService.prisma.user.findUnique({
+        where: { email: updates.email },
+      });
+      if (existingUser && existingUser.username !== username) {
         return res.status(400).json({
           success: false,
           message: "Email already registered by another user",
         });
       }
-      user.email = updates.email;
     }
 
     // Handle username update - check if it's already in use
     let needUsernameUpdate = false;
     const oldUsername = username; // Store old username for reference updates
     if (updates.username && updates.username !== user.username) {
-      const existingUser = await findUserByUsername(updates.username);
+      const existingUser = await databaseService.getUser(updates.username);
       if (existingUser) {
         return res.status(400).json({
           success: false,
@@ -693,53 +596,37 @@ exports.updateProfile = async (req, res) => {
         });
       }
       needUsernameUpdate = true;
-      user.username = updates.username;
     }
 
-    // Update other allowed fields
-    if (updates.name) user.name = updates.name;
-    if (updates.bio !== undefined) user.bio = updates.bio;
-    if (updates.imageUrl) user.imageUrl = updates.imageUrl;
+    // Prepare update data
+    const updateData = {};
+    if (updates.name) updateData.name = updates.name;
+    if (updates.email) updateData.email = updates.email;
+    if (updates.bio !== undefined) updateData.bio = updates.bio;
+    if (updates.imageUrl) updateData.imageUrl = updates.imageUrl;
+    if (updates.username) updateData.username = updates.username;
 
-    // If username is changing, we need to update the key in Redis
+    // Update user using the new database service
+    const updatedUser = await databaseService.updateUser(username, updateData);
+
+    // If username changed, we need to update references in other tables
+    // Note: The user ID stays the same, so we don't need to update foreign key references
+    // The username change is handled by the database service updateUser method
     if (needUsernameUpdate) {
-      // Delete the old user record
-      await redisService.del(`user:${oldUsername}`);
-
-      // Save with the new username
-      await redisService.set(`user:${user.username}`, JSON.stringify(user));
-    } else {
-      // Just update the existing record
-      await redisService.set(`user:${username}`, JSON.stringify(user));
-    }
-
-    // Create simplified user data for updating references
-    const simplifiedUserData = {
-      username: user.username,
-      name: user.name,
-      imageUrl: user.imageUrl || "",
-    };
-
-    // Update user references in other collections
-    try {
-      // 1. Update posts and comments
-      await updateUserInPosts(oldUsername, simplifiedUserData);
-
-      // 2. Update signals
-      await updateUserInSignals(oldUsername, {
-        ...simplifiedUserData,
-        score: user.score || 0,
-      });
-
-      // 3. Update messages in the new messaging system
-      await updateUserInMessages(oldUsername, simplifiedUserData);
-    } catch (syncError) {
-      console.error("Error syncing user data:", syncError);
-      // Continue execution even if synchronization fails
+      try {
+        // The username change is already handled by the updateUser method
+        // All foreign key relationships remain intact since the user ID doesn't change
+        console.log(
+          `Username updated from ${oldUsername} to ${updates.username}`
+        );
+      } catch (syncError) {
+        console.error("Error syncing user data:", syncError);
+        // Continue execution even if synchronization fails
+      }
     }
 
     // Return updated user
-    const { password: _, ...safeUser } = user;
+    const { password: _, ...safeUser } = updatedUser;
     res.json(safeUser);
   } catch (error) {
     console.error("Error updating profile:", error);
@@ -754,13 +641,13 @@ exports.updateProfile = async (req, res) => {
 async function updateUserInPosts(username, userData) {
   try {
     // Get all posts
-    const postKeys = await redisService.keys("post:*");
+    const postKeys = await databaseService.keys("post:*");
 
     for (const key of postKeys) {
-      const postData = await redisService.get(key);
+      const postData = await databaseService.get(key);
       if (!postData) continue;
 
-      let post = JSON.parse(postData);
+      let post = typeof postData === "string" ? JSON.parse(postData) : postData;
       let modified = false;
 
       // Update post publisher
@@ -801,7 +688,7 @@ async function updateUserInPosts(username, userData) {
 
       // Save updated post if modified
       if (modified) {
-        await redisService.set(key, JSON.stringify(post));
+        await databaseService.set(key, post);
       }
     }
   } catch (error) {
@@ -814,13 +701,14 @@ async function updateUserInPosts(username, userData) {
 async function updateUserInSignals(username, userData) {
   try {
     // Get all signals
-    const signalKeys = await redisService.keys("signal:*");
+    const signalKeys = await databaseService.keys("signal:*");
 
     for (const key of signalKeys) {
-      const signalData = await redisService.get(key);
+      const signalData = await databaseService.get(key);
       if (!signalData) continue;
 
-      let signal = JSON.parse(signalData);
+      let signal =
+        typeof signalData === "string" ? JSON.parse(signalData) : signalData;
       let modified = false;
 
       // Update signal publisher
@@ -838,7 +726,7 @@ async function updateUserInSignals(username, userData) {
 
       // Save updated signal if modified
       if (modified) {
-        await redisService.set(key, JSON.stringify(signal));
+        await databaseService.set(key, signal);
       }
     }
   } catch (error) {
@@ -851,13 +739,16 @@ async function updateUserInSignals(username, userData) {
 async function updateUserInMessages(username, userData) {
   try {
     // Get all message conversations that might involve this user
-    const messageKeys = await redisService.keys(`message:*`);
+    const messageKeys = await databaseService.keys(`message:*`);
 
     for (const key of messageKeys) {
-      const messagesData = await redisService.get(key);
+      const messagesData = await databaseService.get(key);
       if (!messagesData) continue;
 
-      let messages = JSON.parse(messagesData);
+      let messages =
+        typeof messagesData === "string"
+          ? JSON.parse(messagesData)
+          : messagesData;
       let modified = false;
 
       // Update sender information in messages
@@ -879,7 +770,7 @@ async function updateUserInMessages(username, userData) {
 
       // Save updated messages if modified
       if (modified) {
-        await redisService.set(key, JSON.stringify(messages));
+        await databaseService.set(key, messages);
         console.log(`Updated user references in message conversation: ${key}`);
       }
     }
@@ -960,7 +851,7 @@ exports.updateUserScore = async (req, res) => {
           );
 
           // Save updated user to Redis
-          await redisService.set(`user:${username}`, JSON.stringify(user));
+          await databaseService.set(`user:${username}`, user);
         }
       }
     }
@@ -1010,5 +901,43 @@ exports.getCurrentUser = async (req, res) => {
       success: false,
       message: "Error retrieving current user",
     });
+  }
+};
+
+// Get signals count for a specific user
+exports.getUserSignalsCount = async (req, res) => {
+  try {
+    const { username } = req.params;
+
+    // Find user to verify existence
+    const user = await findUserByUsername(username);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Get all signals and filter by username
+    const signalKeys = await databaseService.keys("signal:*");
+    let userSignalsCount = 0;
+
+    for (const key of signalKeys) {
+      const signalData = await databaseService.get(key);
+      if (signalData) {
+        const signal =
+          typeof signalData === "string" ? JSON.parse(signalData) : signalData;
+        if (signal.publisher && signal.publisher.username === username) {
+          userSignalsCount++;
+        }
+      }
+    }
+
+    res.json({
+      count: userSignalsCount,
+    });
+  } catch (error) {
+    console.error("Error fetching user signals count:", error);
+    res.status(500).json({ message: "Error fetching user signals count" });
   }
 };

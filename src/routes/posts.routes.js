@@ -1,30 +1,30 @@
 const express = require("express");
 const router = express.Router();
 const { v4: uuidv4 } = require("uuid");
-const redisService = require("../services/redis.service");
+const databaseService = require("../services/database.service");
 const auth = require("../middleware/auth");
 
 // Helper function to get post by ID
 async function getPostById(id) {
-  const post = await redisService.get(`post:${id}`);
-  return post ? JSON.parse(post) : null;
+  const post = await databaseService.get(`post:${id}`);
+  return post || null;
 }
 
 // Get all posts
 router.get("/", async (req, res) => {
   try {
-    const postKeys = await redisService.keys("post:*");
+    const postKeys = await databaseService.keys("post:*");
     const posts = [];
 
     for (const key of postKeys) {
-      const postJson = await redisService.get(key);
+      const postJson = await databaseService.get(key);
       if (postJson) {
-        posts.push(JSON.parse(postJson));
+        posts.push(postJson);
       }
     }
 
     // Sort posts by date (newest first)
-    posts.sort((a, b) => b.date - a.date);
+    posts.sort((a, b) => Number(b.date) - Number(a.date));
 
     return res.status(200).json({
       success: true,
@@ -82,7 +82,7 @@ router.post("/", auth, async (req, res) => {
     const newPost = {
       id: uuidv4(),
       content,
-      publisher,
+      user: publisher,
       isPremium: isPremium || false,
       likes: [],
       comments: [],
@@ -94,7 +94,7 @@ router.post("/", auth, async (req, res) => {
     }
 
     // Save post with its own key
-    await redisService.set(`post:${newPost.id}`, JSON.stringify(newPost));
+    await databaseService.set(`post:${newPost.id}`, JSON.stringify(newPost));
 
     return res.status(201).json({
       success: true,
@@ -145,12 +145,13 @@ router.put("/:id", auth, async (req, res) => {
       delete post.postImageHref;
     }
 
-    await redisService.set(`post:${id}`, JSON.stringify(post));
+    // Use the proper database update method instead of the old Redis approach
+    const updatedPost = await databaseService.updatePost(id, post);
 
     return res.status(200).json({
       success: true,
       message: "Post updated successfully",
-      data: post,
+      data: updatedPost,
     });
   } catch (error) {
     console.error("Error updating post:", error);
@@ -166,7 +167,7 @@ router.put("/:id", auth, async (req, res) => {
 router.delete("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
-    const exists = await redisService.exists(`post:${id}`);
+    const exists = await databaseService.exists(`post:${id}`);
 
     if (!exists) {
       return res.status(404).json({
@@ -175,7 +176,7 @@ router.delete("/:id", auth, async (req, res) => {
       });
     }
 
-    await redisService.del(`post:${id}`);
+    await databaseService.del(`post:${id}`);
 
     return res.status(200).json({
       success: true,
@@ -204,30 +205,32 @@ router.post("/:id/like", auth, async (req, res) => {
       });
     }
 
-    const post = await getPostById(id);
-
-    if (!post) {
+    // Get the user ID from the username
+    const userRecord = await databaseService.getUser(user.username);
+    if (!userRecord) {
       return res.status(404).json({
         success: false,
-        message: `Post with ID ${id} not found`,
+        message: "User not found",
       });
     }
 
-    // Check if already liked
-    const alreadyLiked = post.likes.some(
-      (like) => like.username === user.username
-    );
+    // Use the new likePost method
+    const result = await databaseService.likePost(id, userRecord.id);
 
-    if (!alreadyLiked) {
-      post.likes.push(user);
+    if (result.alreadyLiked) {
+      return res.status(400).json({
+        success: false,
+        message: "Post already liked",
+      });
     }
 
-    await redisService.set(`post:${id}`, JSON.stringify(post));
+    // Get the updated post to return
+    const updatedPost = await getPostById(id);
 
     return res.status(200).json({
       success: true,
       message: "Post liked successfully",
-      data: post,
+      data: updatedPost,
     });
   } catch (error) {
     console.error("Error liking post:", error);
@@ -252,23 +255,32 @@ router.post("/:id/dislike", auth, async (req, res) => {
       });
     }
 
-    const post = await getPostById(id);
-
-    if (!post) {
+    // Get the user ID from the username
+    const userRecord = await databaseService.getUser(user.username);
+    if (!userRecord) {
       return res.status(404).json({
         success: false,
-        message: `Post with ID ${id} not found`,
+        message: "User not found",
       });
     }
 
-    // Remove user from likes
-    post.likes = post.likes.filter((u) => u.username !== user.username);
-    await redisService.set(`post:${id}`, JSON.stringify(post));
+    // Use the new unlikePost method
+    const result = await databaseService.unlikePost(id, userRecord.id);
+
+    if (result.alreadyUnliked) {
+      return res.status(400).json({
+        success: false,
+        message: "Post not liked",
+      });
+    }
+
+    // Get the updated post to return
+    const updatedPost = await getPostById(id);
 
     return res.status(200).json({
       success: true,
       message: "Post disliked successfully",
-      data: post,
+      data: updatedPost,
     });
   } catch (error) {
     console.error("Error disliking post:", error);
@@ -293,8 +305,8 @@ router.post("/:id/comments", auth, async (req, res) => {
       });
     }
 
+    // Check if post exists
     const post = await getPostById(id);
-
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -311,13 +323,13 @@ router.post("/:id/comments", auth, async (req, res) => {
       likes: [],
     };
 
-    post.comments.push(newComment);
-    await redisService.set(`post:${id}`, JSON.stringify(post));
+    // Use the new createComment method
+    const createdComment = await databaseService.createComment(id, newComment);
 
     return res.status(201).json({
       success: true,
       message: "Comment added successfully",
-      data: newComment,
+      data: createdComment,
     });
   } catch (error) {
     console.error("Error adding comment:", error);
@@ -334,29 +346,22 @@ router.delete("/:id/comments/:commentId", auth, async (req, res) => {
   try {
     const { id, commentId } = req.params;
 
-    const post = await getPostById(id);
+    // Use the new deleteComment method
+    const result = await databaseService.deleteComment(id, commentId);
 
-    if (!post) {
+    if (result.notFound) {
       return res.status(404).json({
         success: false,
-        message: `Post with ID ${id} not found`,
+        message: "Comment not found",
       });
     }
 
-    const commentIndex = post.comments.findIndex(
-      (c) => c.commentId === commentId
-    );
-
-    if (commentIndex === -1) {
-      return res.status(404).json({
+    if (result.unauthorized) {
+      return res.status(403).json({
         success: false,
-        message: `Comment with ID ${commentId} not found`,
+        message: "Comment does not belong to this post",
       });
     }
-
-    // Remove the comment
-    post.comments = post.comments.filter((c) => c.commentId !== commentId);
-    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
@@ -385,46 +390,29 @@ router.post("/:id/comments/:commentId/like", auth, async (req, res) => {
       });
     }
 
-    const post = await getPostById(id);
-
-    if (!post) {
+    // Get the user ID from the username
+    const userRecord = await databaseService.getUser(user.username);
+    if (!userRecord) {
       return res.status(404).json({
         success: false,
-        message: `Post with ID ${id} not found`,
+        message: "User not found",
       });
     }
 
-    const commentIndex = post.comments.findIndex(
-      (c) => c.commentId === commentId
-    );
+    // Use the new likeComment method
+    const result = await databaseService.likeComment(commentId, userRecord.id);
 
-    if (commentIndex === -1) {
-      return res.status(404).json({
-        success: false,
-        message: `Comment with ID ${commentId} not found`,
-      });
-    }
-
-    // Check if user already liked the comment
-    if (
-      post.comments[commentIndex].likes.some(
-        (u) => u.username === user.username
-      )
-    ) {
+    if (result.alreadyLiked) {
       return res.status(400).json({
         success: false,
-        message: "User already liked this comment",
+        message: "Comment already liked",
       });
     }
-
-    // Add user to comment likes
-    post.comments[commentIndex].likes.push(user);
-    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
       message: "Comment liked successfully",
-      data: post.comments[commentIndex],
+      data: result.like,
     });
   } catch (error) {
     console.error("Error liking comment:", error);
@@ -449,36 +437,31 @@ router.post("/:id/comments/:commentId/dislike", auth, async (req, res) => {
       });
     }
 
-    const post = await getPostById(id);
-
-    if (!post) {
+    // Get the user ID from the username
+    const userRecord = await databaseService.getUser(user.username);
+    if (!userRecord) {
       return res.status(404).json({
         success: false,
-        message: `Post with ID ${id} not found`,
+        message: "User not found",
       });
     }
 
-    const commentIndex = post.comments.findIndex(
-      (c) => c.commentId === commentId
+    // Use the new unlikeComment method
+    const result = await databaseService.unlikeComment(
+      commentId,
+      userRecord.id
     );
 
-    if (commentIndex === -1) {
-      return res.status(404).json({
+    if (result.alreadyUnliked) {
+      return res.status(400).json({
         success: false,
-        message: `Comment with ID ${commentId} not found`,
+        message: "Comment not liked",
       });
     }
-
-    // Remove user from comment likes
-    post.comments[commentIndex].likes = post.comments[
-      commentIndex
-    ].likes.filter((u) => u.username !== user.username);
-    await redisService.set(`post:${id}`, JSON.stringify(post));
 
     return res.status(200).json({
       success: true,
       message: "Comment disliked successfully",
-      data: post.comments[commentIndex],
     });
   } catch (error) {
     console.error("Error disliking comment:", error);

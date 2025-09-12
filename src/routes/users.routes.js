@@ -34,6 +34,9 @@ router.get("/debug-cookies", (req, res) => {
 // Get current authenticated user (requires authentication)
 router.get("/me", auth, usersController.getCurrentUser);
 
+// Get signals count for a specific user
+router.get("/:username/signals/count", usersController.getUserSignalsCount);
+
 // Get user by username - MUST come after specific routes
 router.get("/:username", usersController.getUserByUsername);
 

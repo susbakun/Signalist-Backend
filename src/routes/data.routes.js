@@ -1,12 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const redisService = require("../services/redis.service");
+const databaseService = require("../services/database.service");
 
 // Get all data for a specific key
 router.get("/:key", async (req, res) => {
   try {
     const { key } = req.params;
-    const data = await redisService.get(key);
+    const data = await databaseService.get(key);
 
     if (!data) {
       return res.status(404).json({
@@ -42,7 +42,7 @@ router.post("/:key", async (req, res) => {
       });
     }
 
-    await redisService.set(key, value);
+    await databaseService.set(key, value);
 
     return res.status(201).json({
       success: true,
@@ -71,7 +71,7 @@ router.put("/:key", async (req, res) => {
       });
     }
 
-    const exists = await redisService.exists(key);
+    const exists = await databaseService.exists(key);
     if (!exists) {
       return res.status(404).json({
         success: false,
@@ -79,7 +79,7 @@ router.put("/:key", async (req, res) => {
       });
     }
 
-    await redisService.set(key, value);
+    await databaseService.set(key, value);
 
     return res.status(200).json({
       success: true,
@@ -100,7 +100,7 @@ router.delete("/:key", async (req, res) => {
   try {
     const { key } = req.params;
 
-    const exists = await redisService.exists(key);
+    const exists = await databaseService.exists(key);
     if (!exists) {
       return res.status(404).json({
         success: false,
@@ -108,7 +108,7 @@ router.delete("/:key", async (req, res) => {
       });
     }
 
-    await redisService.delete(key);
+    await databaseService.delete(key);
 
     return res.status(200).json({
       success: true,

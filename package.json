@@ -6,11 +6,15 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "cleanup:redis": "node src/scripts/cleanup-redis-dependencies.js",
+    "migrate:redis-to-postgres": "node src/scripts/migrate-redis-to-postgres.js",
+    "remove:redis": "node src/scripts/remove-redis-dependencies.js",
+    "setup:database": "node src/scripts/setup-database.js",
+    "check:database": "node src/scripts/check-database.js"
   },
   "keywords": [
     "express",
-    "redis",
     "backend",
     "api"
   ],
@@ -18,17 +22,19 @@
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.782.0",
+    "@prisma/client": "^4.16.2",
     "axios": "^1.8.4",
     "bcrypt": "^5.1.1",
+    "ccxt": "^4.4.99",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "decimal.js": "^10.5.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "ioredis": "^5.3.2",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.2",
+    "prisma": "^4.16.2",
     "socket.io": "^4.8.1",
     "uuid": "^11.1.0"
   },

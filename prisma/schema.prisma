@@ -1,0 +1,260 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_URL")
+}
+
+model User {
+  id                String   @id @default(uuid())
+  name              String
+  username          String   @unique
+  email             String   @unique
+  password          String
+  imageUrl          String?
+  bio               String?
+  score             Float    @default(0)
+  hasPremium        Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relationships
+  posts             Post[]
+  signals           Signal[]
+  followers         Follow[] @relation("UserFollowers")
+  followings        Follow[] @relation("UserFollowings")
+  blockedUsers      Block[]  @relation("UserBlocked")
+  blockedByUsers    Block[]  @relation("UserBlockedBy")
+  messages          Message[]
+  messageRoomParticipants MessageRoomParticipant[]
+  comments          Comment[]
+  postLikes         PostLike[]
+  signalLikes      SignalLike[]
+  commentLikes     CommentLike[]
+  postBookmarks    PostBookmark[]
+  signalBookmarks  SignalBookmark[]
+
+  @@map("users")
+}
+
+model Follow {
+  id           String   @id @default(uuid())
+  followerId   String
+  followingId  String
+  createdAt    DateTime @default(now())
+
+  follower     User     @relation("UserFollowers", fields: [followerId], references: [id], onDelete: Cascade)
+  following    User     @relation("UserFollowings", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@map("follows")
+}
+
+model Block {
+  id           String   @id @default(uuid())
+  blockerId    String
+  blockedId    String
+  createdAt    DateTime @default(now())
+
+  blocker      User     @relation("UserBlocked", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked      User     @relation("UserBlockedBy", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@map("blocks")
+}
+
+model Post {
+  id          String   @id @default(uuid())
+  userId      String
+  content     String
+  postImageHref String?
+  date        BigInt  // Unix timestamp
+  isPremium   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes       PostLike[]
+  comments    Comment[]
+  bookmarks   PostBookmark[]
+
+  @@map("posts")
+}
+
+model PostLike {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@map("post_likes")
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  postId    String
+  commentId String   @unique
+  body      String
+  date      BigInt   // Unix timestamp
+  createdAt DateTime @default(now())
+
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  publisher User     @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  likes     CommentLike[]
+
+  publisherId String
+
+  @@map("comments")
+}
+
+model CommentLike {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId])
+  @@map("comment_likes")
+}
+
+model Signal {
+  id          String   @id @default(uuid())
+  userId      String
+  marketName  String
+  marketUuid  String
+  quoteAsset  String?
+  entry       Float
+  stoploss    Float
+  openTime    BigInt   // Unix timestamp
+  closeTime   BigInt   // Unix timestamp
+  status      String   @default("open") // "open", "closed", "not_opened"
+  date        BigInt   // Unix timestamp
+  description String?
+  chartImageHref String?
+  isPremium   Boolean  @default(false)
+  score       Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes       SignalLike[]
+  targets     SignalTarget[]
+  bookmarks   SignalBookmark[]
+
+  @@map("signals")
+}
+
+model SignalTarget {
+  id        String   @id @default(uuid())
+  signalId  String
+  value     Float
+  touched   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  signal    Signal   @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  @@map("signal_targets")
+}
+
+model SignalLike {
+  id        String   @id @default(uuid())
+  signalId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  signal    Signal   @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([signalId, userId])
+  @@map("signal_likes")
+}
+
+model PostBookmark {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@map("post_bookmarks")
+}
+
+model SignalBookmark {
+  id        String   @id @default(uuid())
+  signalId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  signal    Signal   @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([signalId, userId])
+  @@map("signal_bookmarks")
+}
+
+model MessageRoom {
+  id          String   @id @default(uuid())
+  name        String?
+  isGroup     Boolean  @default(false)
+  groupImageHref String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  participants MessageRoomParticipant[]
+  messages     Message[]
+
+  @@map("message_rooms")
+}
+
+model MessageRoomParticipant {
+  id          String   @id @default(uuid())
+  roomId      String
+  userId      String
+  joinedAt    DateTime @default(now())
+
+  room        MessageRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@map("message_room_participants")
+}
+
+model Message {
+  id          String   @id @default(uuid())
+  roomId      String
+  userId      String
+  text        String
+  date        BigInt   // Unix timestamp
+  messageImageHref String?
+  createdAt   DateTime @default(now())
+
+  room        MessageRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model NewsCache {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  data        Json
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@map("news_cache")
+}

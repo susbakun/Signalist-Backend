@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require("uuid");
-const redisService = require("../services/redis.service");
+const databaseService = require("../services/database.service");
 const axios = require("axios");
 
 /**
@@ -9,7 +9,7 @@ const axios = require("axios");
  */
 async function getConversationFromRedis(roomId) {
   try {
-    const conversation = await redisService.get(`message:${roomId}`);
+    const conversation = await databaseService.get(`message:${roomId}`);
     return conversation ? JSON.parse(conversation) : [];
   } catch (error) {
     console.error(`Error getting conversation ${roomId}:`, error);
@@ -25,7 +25,9 @@ async function getConversationFromRedis(roomId) {
 async function getUserConversationsFromRedis(username) {
   try {
     // Get all conversation keys that involve this user
-    const conversationKeys = await redisService.keys(`message:*${username}*`);
+    const conversationKeys = await databaseService.keys(
+      `message:*${username}*`
+    );
     const conversations = {};
 
     // Process each conversation
@@ -214,7 +216,7 @@ async function sendMessage(req, res) {
     messages.push(newMessage);
 
     // Save updated conversation
-    await redisService.set(`message:${roomId}`, JSON.stringify(messages));
+    await databaseService.set(`message:${roomId}`, JSON.stringify(messages));
 
     // Emit the message to all users in the room via socket
     if (req.io) {
@@ -263,11 +265,11 @@ async function createDMConversation(req, res) {
     const roomId = `${users[0]}-${users[1]}`;
 
     // Check if conversation already exists
-    const exists = await redisService.exists(`message:${roomId}`);
+    const exists = await databaseService.exists(`message:${roomId}`);
 
     if (!exists) {
       // Create empty conversation
-      await redisService.set(`message:${roomId}`, JSON.stringify([]));
+      await databaseService.set(`message:${roomId}`, JSON.stringify([]));
     }
 
     // Return the conversation structure expected by the frontend
@@ -310,7 +312,7 @@ async function createGroupConversation(req, res) {
     const roomId = `group-${groupName}-${Date.now()}`;
 
     // Create empty conversation
-    await redisService.set(`message:${roomId}`, JSON.stringify([]));
+    await databaseService.set(`message:${roomId}`, JSON.stringify([]));
 
     // Return the group conversation structure expected by the frontend
     return res.status(201).json({
