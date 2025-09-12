@@ -6,18 +6,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "build": "npx prisma generate",
-    "postinstall": "npx prisma generate",
-    "prestart": "npx prisma generate",
+    "prisma:generate": "prisma generate",
+    "postinstall": "prisma generate",
     "deploy": "npx prisma generate && npx prisma db push --accept-data-loss && node src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "cleanup:redis": "node src/scripts/cleanup-redis-dependencies.js",
-    "migrate:redis-to-postgres": "node src/scripts/migrate-redis-to-postgres.js",
-    "remove:redis": "node src/scripts/remove-redis-dependencies.js",
-    "setup:database": "node src/scripts/setup-database.js",
-    "check:database": "node src/scripts/check-database.js",
-    "check:prisma": "node src/scripts/check-prisma-status.js",
-    "generate": "npx prisma generate"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "express",
