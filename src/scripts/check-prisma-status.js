@@ -1,4 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
+const { PrismaClient } = require("../../generated/client");
 
 async function checkPrismaStatus() {
   console.log("🔍 Checking Prisma Client status...");

@@ -16,7 +16,8 @@
     "remove:redis": "node src/scripts/remove-redis-dependencies.js",
     "setup:database": "node src/scripts/setup-database.js",
     "check:database": "node src/scripts/check-database.js",
-    "check:prisma": "node src/scripts/check-prisma-status.js"
+    "check:prisma": "node src/scripts/check-prisma-status.js",
+    "generate": "npx prisma generate"
   },
   "keywords": [
     "express",
