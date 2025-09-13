@@ -143,8 +143,15 @@ exports.registerUser = async (req, res) => {
 
     // For cross-origin requests (frontend on different domain), we need SameSite=None
     const isProduction = process.env.NODE_ENV === "production";
+
+    // Check if this is a cross-origin request by comparing with allowed origins
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(",")
+      : ["https://signalisttech.com", "http://localhost:5173"];
+
     const isCrossOrigin =
       req.headers.origin &&
+      allowedOrigins.includes(req.headers.origin) &&
       req.headers.origin !== `${req.protocol}://${req.headers.host}`;
 
     const cookieOptions = {
@@ -188,8 +195,15 @@ exports.logoutUser = async (req, res) => {
 
     // For cross-origin requests, we need to match the original cookie settings
     const isProduction = process.env.NODE_ENV === "production";
+
+    // Check if this is a cross-origin request by comparing with allowed origins
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(",")
+      : ["https://signalisttech.com", "http://localhost:5173"];
+
     const isCrossOrigin =
       req.headers.origin &&
+      allowedOrigins.includes(req.headers.origin) &&
       req.headers.origin !== `${req.protocol}://${req.headers.host}`;
 
     res.clearCookie("authToken", {
@@ -261,8 +275,15 @@ exports.loginUser = async (req, res) => {
 
     // For cross-origin requests (frontend on different domain), we need SameSite=None
     const isProduction = process.env.NODE_ENV === "production";
+
+    // Check if this is a cross-origin request by comparing with allowed origins
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(",")
+      : ["https://signalisttech.com", "http://localhost:5173"];
+
     const isCrossOrigin =
       req.headers.origin &&
+      allowedOrigins.includes(req.headers.origin) &&
       req.headers.origin !== `${req.protocol}://${req.headers.host}`;
 
     const cookieOptions = {
