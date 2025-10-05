@@ -155,19 +155,29 @@ exports.registerUser = async (req, res) => {
       req.headers.origin !== `${req.protocol}://${req.headers.host}`;
 
     // For cross-origin requests, we need secure=true and sameSite=none
-    const needsSecureCookie = isCrossOrigin && (req.headers["x-forwarded-proto"] === "https" || req.headers.host.includes("liara.run"));
+    // But for localhost development, we use secure=false and sameSite=lax
+    const isLocalhost =
+      req.headers.host && req.headers.host.includes("localhost");
+    const needsSecureCookie =
+      isCrossOrigin &&
+      !isLocalhost &&
+      (req.headers["x-forwarded-proto"] === "https" ||
+        req.headers.host.includes("liara.run"));
 
     const cookieOptions = {
       httpOnly: true,
-      secure: isSecure || needsSecureCookie, // Force secure for cross-origin on Liara
-      sameSite: isCrossOrigin ? "none" : "lax", // Always use "none" for cross-origin
+      secure: isSecure || needsSecureCookie, // Force secure for cross-origin on Liara, but not for localhost
+      sameSite: isCrossOrigin && !isLocalhost ? "none" : "lax", // Use "lax" for localhost, "none" for production cross-origin
       maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week in milliseconds
       path: "/",
     };
 
     console.log("🍪 [REGISTER] Setting cookie with options:", cookieOptions);
     console.log("🌍 [REGISTER] Is cross-origin request:", isCrossOrigin);
-    console.log("🔐 [REGISTER] Cookie sameSite setting:", cookieOptions.sameSite);
+    console.log(
+      "🔐 [REGISTER] Cookie sameSite setting:",
+      cookieOptions.sameSite
+    );
     console.log("🔒 [REGISTER] Cookie secure setting:", cookieOptions.secure);
     res.cookie("authToken", token, cookieOptions);
 
@@ -208,7 +218,14 @@ exports.logoutUser = async (req, res) => {
       req.headers.origin !== `${req.protocol}://${req.headers.host}`;
 
     // For cross-origin requests, we need secure=true and sameSite=none
-    const needsSecureCookie = isCrossOrigin && (req.headers["x-forwarded-proto"] === "https" || req.headers.host.includes("liara.run"));
+    // But for localhost development, we use secure=false and sameSite=lax
+    const isLocalhost =
+      req.headers.host && req.headers.host.includes("localhost");
+    const needsSecureCookie =
+      isCrossOrigin &&
+      !isLocalhost &&
+      (req.headers["x-forwarded-proto"] === "https" ||
+        req.headers.host.includes("liara.run"));
 
     res.clearCookie("authToken", {
       httpOnly: true,
@@ -217,8 +234,14 @@ exports.logoutUser = async (req, res) => {
       path: "/",
     });
 
-    console.log("🗑️ [LOGOUT] Clearing cookie with sameSite:", isCrossOrigin ? "none" : "lax");
-    console.log("🔒 [LOGOUT] Cookie secure setting:", isSecure || needsSecureCookie);
+    console.log(
+      "🗑️ [LOGOUT] Clearing cookie with sameSite:",
+      isCrossOrigin ? "none" : "lax"
+    );
+    console.log(
+      "🔒 [LOGOUT] Cookie secure setting:",
+      isSecure || needsSecureCookie
+    );
 
     res.json({
       success: true,
@@ -289,12 +312,19 @@ exports.loginUser = async (req, res) => {
       req.headers.origin !== `${req.protocol}://${req.headers.host}`;
 
     // For cross-origin requests, we need secure=true and sameSite=none
-    const needsSecureCookie = isCrossOrigin && (req.headers["x-forwarded-proto"] === "https" || req.headers.host.includes("liara.run"));
+    // But for localhost development, we use secure=false and sameSite=lax
+    const isLocalhost =
+      req.headers.host && req.headers.host.includes("localhost");
+    const needsSecureCookie =
+      isCrossOrigin &&
+      !isLocalhost &&
+      (req.headers["x-forwarded-proto"] === "https" ||
+        req.headers.host.includes("liara.run"));
 
     const cookieOptions = {
       httpOnly: true,
-      secure: isSecure || needsSecureCookie, // Force secure for cross-origin on Liara
-      sameSite: isCrossOrigin ? "none" : "lax", // Always use "none" for cross-origin
+      secure: isSecure || needsSecureCookie, // Force secure for cross-origin on Liara, but not for localhost
+      sameSite: isCrossOrigin && !isLocalhost ? "none" : "lax", // Use "lax" for localhost, "none" for production cross-origin
       maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week in milliseconds
       path: "/",
     };
