@@ -144,7 +144,7 @@ const upload = multer({ storage: storage });
 
 // Routes
 app.get("/", (req, res) => {
-  res.json({ message: "Welcome to Signalist Backend API" });
+  res.json({ message: "Welcome to Signalist Backend API v2" });
 });
 
 // Define routes
