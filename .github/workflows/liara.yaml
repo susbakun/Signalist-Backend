@@ -37,5 +37,6 @@ jobs:
             cd /home/deploy/signalist
             docker compose build backend
             docker compose up -d backend
+            docker restart signalist-nginx
           EOF
 
