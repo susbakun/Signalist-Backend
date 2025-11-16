@@ -28,9 +28,9 @@ exports.getSignals = async (req, res) => {
     const publishers =
       typeof publishersCsv === "string" && publishersCsv.length
         ? publishersCsv
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
         : null;
     const market = req.query.market; // e.g., "BTC/USDT"
     const status = req.query.status; // "open" | "closed" | "not_opened"

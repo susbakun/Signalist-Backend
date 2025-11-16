@@ -81,7 +81,7 @@ async function getUserConversationsFromRedis(username) {
             // Try to fetch user data from users API
             const baseUrl =
               process.env.NODE_ENV === "production"
-                ? "https://signalist-backend.liara.run/api"
+                ? "https://api.signalisttech.com/api"
                 : "http://localhost:3000/api";
             const userResponse = await axios.get(
               `${baseUrl}/users/${otherUsername}`
@@ -356,7 +356,7 @@ async function uploadImage(req, res) {
 
     // In a real implementation, you would save the file to a storage service
     // For this example, we'll just return a mock URL
-    const url = `https://signalist-backend.liara.run/uploads/messages/${filename}`;
+    const url = `https://api.signalisttech.com/uploads/messages/${filename}`;
 
     return res.status(200).json({
       success: true,

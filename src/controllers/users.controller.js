@@ -166,9 +166,9 @@ exports.registerUser = async (req, res) => {
 
     const cookieOptions = {
       httpOnly: true,
-      secure: isSecure || needsSecureCookie, // Force secure for cross-origin on Liara, but not for localhost
-      sameSite: isCrossOrigin && !isLocalhost ? "none" : "lax", // Use "lax" for localhost, "none" for production cross-origin
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week in milliseconds
+      secure: process.env.COOKIE_SECURE === "true",
+      sameSite: "none", // چون دامنه جداست
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 1 هفته
       path: "/",
     };
 
